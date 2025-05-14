@@ -2,10 +2,7 @@ from pytubefix import YouTube
 from pytubefix.exceptions import VideoUnavailable
 import whisper
 from textblob import TextBlob
-from moviepy.video.io.VideoFileClip import VideoFileClip
-from moviepy.video.VideoClip import TextClip
-from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-import os
+from moviepy import * 
 
 def download_video(url):
     try:
@@ -42,25 +39,33 @@ def find_highlight_segments(segments, top_n=3):
     # Return top N segments by score
     return sorted(scored_segments, key=lambda x: x[1], reverse=True)[:top_n]
 
-def create_short(start_time, duration=60):
+def create_short(highlights, duration=60):
     video = VideoFileClip("input_video.mp4")
+    clips = []
     
-    # Extract clip (max 60s for YouTube Shorts)
-    clip = video.subclipped(start_time, min(start_time + duration, video.end))
+    # Create clips from each highlight
+    for start_time, _ in highlights:
+        clip = video.subclipped(start_time, min(start_time + duration/len(highlights), video.end))
+        clips.append(clip)
+    
+    # Concatenate all clips
+    final_clip = clips[0]
+    for clip in clips[1:]:
+        final_clip = concatenate_videoclips([final_clip, clip])
     
     # Convert to vertical (9:16)
-    clip = clip.resized(height=1920)
-    clip = clip.cropped(x_center=clip.w/2, y_center=clip.h/2, width=1080, height=1920)
+    final_clip = final_clip.resized(height=1920)
+    final_clip = final_clip.cropped(x_center=final_clip.w/2, y_center=final_clip.h/2, width=1080, height=1920)
     
-    # Add basic text (optional)
+    # Add basic text
     txt_clip = TextClip(font="/usr/share/fonts/opentype/fira/FiraMono-Medium.otf", 
-                        text="Highlight!", 
+                        text="Highlights!", 
                         font_size=70, 
                         color='white', 
                         bg_color='white')
-    final_clip = CompositeVideoClip([clip, txt_clip.with_duration(clip.duration).with_position('center')])
+    final_clip = CompositeVideoClip([final_clip, txt_clip.with_duration(final_clip.duration).with_position('center')])
     
-    final_clip.write_videofile(f"short_{start_time}.mp4", fps=24)
+    final_clip.write_videofile("short_highlights.mp4", fps=24)
 
 if __name__ == "__main__":
     video_url = 'https://www.youtube.com/watch?v=-4GmbBoYQjE'
@@ -71,7 +76,6 @@ if __name__ == "__main__":
     # Find highlights
     highlights = find_highlight_segments(segments)
 
-    # Create shorts
-    for start_time, score in highlights:
-        create_short(start_time)
+    # Create single short with all highlights
+    create_short(highlights)
         
