@@ -10,6 +10,35 @@ from nltk.corpus import opinion_lexicon
 import requests
 import csv
 from io import StringIO
+from nrclex import NRCLex
+from moviepy.video.fx import FadeIn, FadeOut
+
+def get_emotional_keywords_v2(target_emotions=None):
+    """
+    Get emotional keywords from NRCLex lexicon.
+    
+    Args:
+        target_emotions (list): List of emotions to target (e.g., ['joy', 'surprise'])
+        
+    Returns:
+        list: Words associated with the target emotions from NRCLex lexicon
+    """
+    if target_emotions is None:
+        target_emotions = ['joy', 'surprise', 'anticipation', 'trust']
+    
+    # Create an empty NRCLex object to access the lexicon
+    emotion_analyzer = NRCLex('')
+    
+    # Get all words from the lexicon
+    emotional_words = []
+    
+    # Iterate through the affect dictionary to find words with target emotions
+    for word, emotions in emotion_analyzer.affect_dict.items():
+        # Check if the word has any of our target emotions
+        if any(emotion in target_emotions for emotion in emotions):
+            emotional_words.append(word)
+    
+    return emotional_words
 
 def get_emotional_keywords(threshold=0.5):
     """Get words associated with excitement, surprise and other highlight-related emotions."""
@@ -95,12 +124,18 @@ def find_highlight_segments(segments, top_n=3, min_duration=3, max_duration=30):
     - Presence of key phrases indicating important moments
     - Speaking rate/energy
     - Segment length (not too short, not too long)
+    - Time position (early and late segments get a boost)
     """
     # Load spaCy for better text analysis
     nlp = spacy.load("en_core_web_sm")
     
+    # Get video duration for time-based scoring
+    video = VideoFileClip("input_video.mp4")
+    video_duration = video.duration
+    video.close()
+    
     # Keywords that might indicate interesting content
-    highlight_keywords = get_emotional_keywords()
+    highlight_keywords = get_emotional_keywords_v2()
     
     scored_segments = []
     
@@ -135,7 +170,7 @@ def find_highlight_segments(segments, top_n=3, min_duration=3, max_duration=30):
         speaking_rate = word_count / max(duration, 1)  # Avoid division by zero
         speaking_rate_score = min(speaking_rate / 3, 1) * 0.7  # Normalize and cap
         
-        # Calculate final score with different weights
+        # Calculate base score with different weights
         score = (
             sentiment_score * 1.0 +
             keyword_score * 1.5 +
@@ -143,6 +178,11 @@ def find_highlight_segments(segments, top_n=3, min_duration=3, max_duration=30):
             speaking_rate_score * 0.8 +
             (word_count / 20) * 0.5  # Some bias toward longer segments, but capped
         )
+        
+        # Add time-based scoring (peaks in first 30s and last 30s score higher)
+        time_position = start_time / video_duration
+        if time_position < 0.3 or time_position > 0.7:
+            score *= 1.3  # Boost early and late segments
         
         scored_segments.append((segment["start"], score))
     
@@ -152,28 +192,53 @@ def find_highlight_segments(segments, top_n=3, min_duration=3, max_duration=30):
 
 def create_short(highlights, duration=60):
     video = VideoFileClip("input_video.mp4")
-    clips = []
     
-    # Create clips from each highlight
-    for start_time, _ in highlights:
-        clip = video.subclipped(start_time, min(start_time + duration/len(highlights), video.end))
+    # Sort highlights by time and ensure non-overlapping
+    highlights.sort(key=lambda x: x[0])
+    final_segments = []
+    current_end = 0
+    
+    for start, score in highlights:
+        if start >= current_end:
+            final_segments.append((start, start + 15))  # 15s clips
+            current_end = start + 15
+            if sum(end-start for start,end in final_segments) >= 55:  # Leave 5s buffer
+                break
+    
+    clips = []
+    # Create clips from each non-overlapping segment with effects
+    for start, end in final_segments:
+        # Create base clip
+        clip = video.subclipped(start, min(end, video.end))
+        
+        # Add zoom effect (gradually zoom in from 1.0 to 1.05 over the clip duration)
+        clip = clip.resized(lambda t: 1 + 0.05 * (t/clip.duration))
+        
+        # Add fade in/out transitions
+        fadein = FadeIn(duration=0.5)
+        fadeout = FadeOut(duration=0.5)
+        clip = fadein.apply(clip)
+        clip = fadeout.apply(clip)
+        
         clips.append(clip)
     
     # Concatenate all clips
+    #TODO add transition clip
     final_clip = clips[0]
     for clip in clips[1:]:
-        final_clip = concatenate_videoclips([final_clip, clip])
+        final_clip = concatenate_videoclips([final_clip, clip], method="compose")
     
     # Convert to vertical (9:16)
     final_clip = final_clip.resized(height=1920)
     final_clip = final_clip.cropped(x_center=final_clip.w/2, y_center=final_clip.h/2, width=1080, height=1920)
-
+    
     final_clip = CompositeVideoClip([final_clip])
     
     final_clip.write_videofile("short_highlights.mp4", fps=24)
+    video.close()
 
 if __name__ == "__main__":
-    video_url = 'https://www.youtube.com/watch?v=eUDGlxu_-ic'
+    video_url = 'https://www.youtube.com/watch?v=-4GmbBoYQjE'
     download_video(video_url)
     print("Video downloaded successfully.")
     segments = get_transcription()
