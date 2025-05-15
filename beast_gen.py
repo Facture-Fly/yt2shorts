@@ -5,14 +5,7 @@ from textblob import TextBlob
 from moviepy import * 
 import numpy as np
 import spacy
-import nltk
-from nltk.corpus import opinion_lexicon
-import requests
-import csv
-from io import StringIO
-from nrclex import NRCLex
-from moviepy.video.fx import FadeIn, FadeOut
-from moviepy.video.fx import Crop
+import cv2
 
 def get_transcription():
     model = whisper.load_model("base")  # Use 'small' or 'medium' for better accuracy
@@ -122,7 +115,6 @@ def create_short(highlights):
         },
         "transition_duration": 0.3
     }
-    print(BEAST_STYLE["text_style"])
     
     for start, _ in highlights:
         clip = video.subclipped(start, start + 15)
@@ -151,38 +143,42 @@ def create_short(highlights):
     # Vertical crop with motion
     final = final.resized(height=1920)
 
-    # def shaking_position(t):
-    #     return final.w/2 * (1 + 0.05 * np.sin(t * 2))
-    
-    # final = final.fx(
-    #     Crop,
-    #     x_center=shaking_position,
-    #     y_center=final.h/2,
-    #     width=1080,
-    #     height=1920
-    # )
-    def apply_shake(get_frame, t):
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+    )
+
+    def apply_face_centered_crop(get_frame, t):
         frame = get_frame(t)
+        height, width = frame.shape[:2]
         
-        # Calculate dynamic position
-        x_center = int(final.w/2 * (1 + 0.05 * np.sin(t * 2)))
-        y_center = final.h // 2
+        # Convert to grayscale for face detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        faces = face_cascade.detectMultiScale(
+            gray, 
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30))
         
-        # Ensure crop dimensions
-        left = max(0, x_center - 540)
-        right = left + 1080  # Force exact width
-        
-        # Handle right edge
-        if right > final.w:
-            right = final.w
-            left = right - 1080
-        
-        # Remove alpha channel if present
+        if len(faces) > 0:
+            # Get largest face
+            (x, y, w, h) = max(faces, key=lambda f: f[2]*f[3])
+            face_center_x = x + w//2
+        else:
+            # Fallback to original shake if no faces
+            face_center_x = int(width/2 * (1 + 0.05 * np.sin(t * 2)))
+
+        # Calculate crop boundaries
+        crop_width = 1080
+        left = face_center_x - crop_width//2
+        left = max(0, min(left, width - crop_width))
+        right = left + crop_width
+
+        # Vertical crop (already resized to 1920 height)
         return frame[:1920, left:right, :3]
 
-    # Apply transformation and remove mask
-    final = final.transform(apply_shake).without_mask()
-    
+    # Replace the existing apply_shake with this
+    final = final.transform(apply_face_centered_crop).without_mask()
+
     final.write_videofile("beast_short.mp4", fps=24, threads=4)
 
 def download_video(url):
