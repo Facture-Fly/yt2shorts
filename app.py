@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from beast_gen import (
     download_video, get_transcription, 
-    find_highlight_segments, create_vid_gear_short
+    find_highlight_segments, create_vid_gear_short, create_short
 )
 
 # Configuration
