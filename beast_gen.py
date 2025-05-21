@@ -230,19 +230,34 @@ def create_vid_gear_short(highlights):
     # Mr. Beast effect parameters
     ZOOM_FACTOR = 0.08  # Reduced from original
     ZOOM_DURATION = 15   # frames for zoom effect
-    TEXT_SETTINGS = {
-        "text": "EPIC CHALLENGE",
-        "fontFace": cv2.FONT_HERSHEY_SIMPLEX,
-        "fontScale": 1.5,
-        "color": (255, 255, 255),
-        "thickness": 3,
-        "lineType": cv2.LINE_AA,
-        "org": (540, 100)
-    }
+    TEXT_SETTINGS = [
+        {
+            "text": "Ron admits to buying ALL of Max's",
+            "fontFace": cv2.FONT_HERSHEY_SIMPLEX,
+            "fontScale": 1.5,
+            "text_color": (255, 255, 255),  # White text
+            "stroke_color": (0, 0, 0),      # Black stroke
+            "thickness": 3,
+            "line_spacing": 40,
+            "background_color": (0, 0, 0, 200)  # Semi-transparent black
+        },
+        {
+            "text": "concert tickets",
+            "fontFace": cv2.FONT_HERSHEY_SIMPLEX,
+            "fontScale": 1.5,
+            "offset_y": 60,  # Vertical offset from first line
+            "text_color": (255, 255, 255),  # White text
+            "stroke_color": (0, 0, 0),      # Black stroke
+            "thickness": 3,
+            "line_spacing": 40,
+            "background_color": (0, 0, 0, 200)  # Semi-transparent black
+        }
+    ]
 
     # Face tracking state
     position_buffer = deque(maxlen=5)
     prev_x = TARGET_WIDTH // 2
+
 
     def apply_effects(frame, frame_idx, highlight_duration):
         # 1. Initial resize to target dimensions
@@ -265,11 +280,74 @@ def create_vid_gear_short(highlights):
         # 3. Apply dynamic face tracking crop
         final_frame = dynamic_crop(frame)
         
-        # 4. Add text overlay
-        final_frame = cv2.putText(final_frame, **TEXT_SETTINGS)
+        # 4. Add multi-line text overlay
+        # 4. Add styled text with background
+        final_frame = add_text_with_background(final_frame)
         
         return final_frame
 
+    def add_text_with_background(frame):
+        # Calculate total text dimensions
+        text_sizes = []
+        for cfg in TEXT_SETTINGS:
+            (text_width, text_height), _ = cv2.getTextSize(
+                cfg["text"], 
+                cfg["fontFace"], 
+                cfg["fontScale"], 
+                cfg["thickness"]
+            )
+            text_sizes.append((text_width, text_height))
+
+        max_width = max([w for w, h in text_sizes])
+        total_height = sum([h for w, h in text_sizes]) + TEXT_SETTINGS[0]["line_spacing"]
+
+        # Calculate background position
+        padding = 30
+        bg_x1 = (TARGET_WIDTH - max_width) // 2 - padding
+        bg_y1 = 80  # Top position
+        bg_x2 = bg_x1 + max_width + 2*padding
+        bg_y2 = bg_y1 + total_height + padding
+
+        # Draw semi-transparent background
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), 
+                     TEXT_SETTINGS[0]["background_color"][:3], -1)
+        frame = cv2.addWeighted(overlay, TEXT_SETTINGS[0]["background_color"][3]/255, 
+                               frame, 1 - TEXT_SETTINGS[0]["background_color"][3]/255, 0)
+
+        # Draw text with stroke effect
+        y_position = bg_y1 + padding + text_sizes[0][1]
+        for i, cfg in enumerate(TEXT_SETTINGS):
+            # Calculate text position
+            (text_width, text_height), _ = cv2.getTextSize(
+                cfg["text"], cfg["fontFace"], cfg["fontScale"], cfg["thickness"]
+            )
+            x = (TARGET_WIDTH - text_width) // 2
+            y = y_position + (cfg.get("offset_y", 0) if i > 0 else 0)
+
+            # Draw stroke (8 directions)
+            for dx in [-2, 0, 2]:
+                for dy in [-2, 0, 2]:
+                    if dx == 0 and dy == 0:
+                        continue
+                    frame = cv2.putText(
+                        frame, cfg["text"], (x + dx, y + dy),
+                        cfg["fontFace"], cfg["fontScale"],
+                        cfg["stroke_color"], cfg["thickness"] + 2,
+                        cv2.LINE_AA
+                    )
+
+            # Draw main text
+            frame = cv2.putText(
+                frame, cfg["text"], (x, y),
+                cfg["fontFace"], cfg["fontScale"],
+                cfg["text_color"], cfg["thickness"],
+                cv2.LINE_AA
+            )
+
+        return frame
+    
+    
     def dynamic_crop(frame):
         nonlocal prev_x
         h, w = frame.shape[:2]
