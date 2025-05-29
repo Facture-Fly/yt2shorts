@@ -1,7 +1,9 @@
 import os
 import yt_dlp
-from ml_highlight_detect import create_viral_shorts_ml
+#from ml_highlight_detect import create_viral_shorts_ml
+from safe_highlight_detect import create_viral_shorts_ml
 from beast_gen import get_transcription
+from create_short import create_shorts_from_viral_segments
 
 def prepare_media_files(url):
     """Download and prepare both video and audio for analysis"""
@@ -65,12 +67,31 @@ def prepare_media_files(url):
 if __name__ == "__main__":
     url = "https://www.youtube.com/watch?v=-4GmbBoYQjE&t=1s"
     media = prepare_media_files(url)
-    if media:
-        segments = get_transcription()
-        
-        # Now use with your viral detector
-        shorts = create_viral_shorts_ml(
-            whisper_segments=segments,
-            audio_path=media['audio_path'],
-            video_path=media['video_path']
-        )
+    if not media:
+        raise ValueError("No media to analyse")
+    
+    segments = get_transcription()
+    
+    # Now use with your viral detector
+    shorts = create_viral_shorts_ml(
+        whisper_segments=segments,
+        audio_path=media['audio_path'],
+        video_path=media['video_path']
+    )
+    
+    video_params = {
+        'output_width': 1080,
+        'output_height': 1920,
+        'enable_face_tracking': True,
+        'text_position': 'Bottom',
+        'zoom_factor': 0.1,
+        'crf_value': 23
+    }
+
+    # Create shorts
+    # created_videos = create_shorts_from_viral_segments(
+    #     viral_segments=shorts,
+    #     input_video_path="input_video.mp4",
+    #     output_dir="viral_shorts",
+    #     **video_params
+    # )
