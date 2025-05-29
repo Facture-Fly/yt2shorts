@@ -1,6 +1,4 @@
 import os
-os.environ["FFMPEG_BINARY"] = "/usr/bin/ffmpeg"  # Your system FFmpeg path
-os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
 
 from pytubefix import YouTube
 from pytubefix.exceptions import VideoUnavailable
@@ -27,15 +25,17 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 import time
+from faster_whisper import WhisperModel
+import torch
+import yt_dlp
+
+print(f"CUDA (ROCm) available: {torch.cuda.is_available()}")
+print(f"Device name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
 
-ffmpeg_path = "/usr/bin/ffmpeg"
-os.environ["FFMPEG_BINARY"] = ffmpeg_path
 # Ensure MoviePy uses your FFmpeg binary
 check()
-MAX_SPEED = 400  # pixels per second
 TRANSCRIPTION_CACHE_DIR = ".transcription_cache"
-MODEL_VERSION = "base"   # Change this if you switch models
 
 amd_render_node = "/dev/dri/renderD128" # <<< IMPORTANT: VERIFY AND UPDATE THIS
 
@@ -46,12 +46,12 @@ def get_video_checksum(file_path):
     hash_data = f"{file_stat.st_size}-{file_stat.st_mtime_ns}"
     return hashlib.md5(hash_data.encode()).hexdigest()
 
-def get_transcription(force_refresh=False):
+def get_transcription(force_refresh=False, model_version="base"):
     # Create cache directory if needed
     os.makedirs(TRANSCRIPTION_CACHE_DIR, exist_ok=True)
     
     video_file = "input_video.mp4"
-    cache_key = f"{get_video_checksum(video_file)}_{MODEL_VERSION}"
+    cache_key = f"{get_video_checksum(video_file)}_{model_version}"
     cache_path = os.path.join(TRANSCRIPTION_CACHE_DIR, f"{cache_key}.pkl")
     
     # Return cached result if available
@@ -61,15 +61,18 @@ def get_transcription(force_refresh=False):
             return pickle.load(f)
     
     # Generate new transcription
-    model = whisper.load_model(MODEL_VERSION)
-    result = model.transcribe(video_file)
+    #model = whisper.load_model(model_version, device="cuda")
+    #TODO fix cuda using cpu for now
+    model = WhisperModel(model_version)
+    segments, info = model.transcribe(video_file)
     
+    segments_list = list(segments)
     # Cache the results
     with open(cache_path, "wb") as f:
-        pickle.dump(result["segments"], f)
+        pickle.dump(segments_list, f) 
         print(f"Cached transcription to {cache_path}")
     
-    return result["segments"]
+    return segments_list
 
 # Cache NLP models and sentiment analyzer
 nlp = spacy.load("en_core_web_sm")
@@ -78,6 +81,18 @@ sentiment_analyzer = SentimentIntensityAnalyzer()
 def find_highlight_segments(segments, top_n=5, min_duration=5, max_duration=15, 
                            min_segment_gap=60, positional_boost=True):
     """Enhanced highlight detection for Mr. Beast-style content"""
+    if not isinstance(segments, list):
+        segments = list(segments)
+    
+    # Convert to dictionary format for compatibility
+    segments = [
+        {
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text
+        }
+        for seg in segments
+    ]
     # Expanded keyword library with multi-word phrases
     BEAST_KEYWORDS = {
         'challenge': 2.0,
@@ -196,9 +211,22 @@ def find_highlight_segments(segments, top_n=5, min_duration=5, max_duration=15,
 
     return final_segments[:top_n]
 
-def create_vid_gear_short(highlights):
-    TARGET_WIDTH = 1080
-    TARGET_HEIGHT = 1920
+def create_vid_gear_short(highlights, **params):
+    """Create short video with customizable parameters"""
+    # Extract parameters with defaults
+    TARGET_WIDTH = params.get('output_width', 1080)
+    TARGET_HEIGHT = params.get('output_height', 1920)
+    ZOOM_FACTOR = params.get('zoom_factor', 0.08)
+    ZOOM_DURATION = params.get('zoom_duration', 15)
+    MAX_TRACKING_SPEED = params.get('max_tracking_speed', 400)
+    SMOOTHING_FRAMES = params.get('smoothing_frames', 5)
+    ENABLE_FACE_TRACKING = params.get('enable_face_tracking', True)
+    TEXT_LINES = params.get('text_lines', [])
+    TEXT_POSITION = params.get('text_position', 'Top')
+    TEXT_BG_OPACITY = params.get('text_bg_opacity', 200)
+    STROKE_THICKNESS = params.get('stroke_thickness', 3)
+    VIDEO_PRESET = params.get('video_preset', 'medium')
+    CRF_VALUE = params.get('crf_value', 23)
 
     # Initialize face detection
     face_cascade = cv2.CascadeClassifier(
@@ -208,8 +236,8 @@ def create_vid_gear_short(highlights):
     # Configure WriteGear with optimized settings
     output_params = {
         "-vcodec": "libx264",
-        "-preset": "medium",
-        "-crf": "23",
+        "-preset": VIDEO_PRESET,
+        "-crf": str(CRF_VALUE),
         "-pix_fmt": "yuv420p",
         "-threads": "8",
         "-g": "50",
@@ -227,37 +255,9 @@ def create_vid_gear_short(highlights):
     cap = cv2.VideoCapture("input_video.mp4")
     fps = cap.get(cv2.CAP_PROP_FPS)
     
-    # Mr. Beast effect parameters
-    ZOOM_FACTOR = 0.08  # Reduced from original
-    ZOOM_DURATION = 15   # frames for zoom effect
-    TEXT_SETTINGS = [
-        {
-            "text": "Ron admits to buying ALL of Max's",
-            "fontFace": cv2.FONT_HERSHEY_SIMPLEX,
-            "fontScale": 1.5,
-            "text_color": (255, 255, 255),  # White text
-            "stroke_color": (0, 0, 0),      # Black stroke
-            "thickness": 3,
-            "line_spacing": 40,
-            "background_color": (0, 0, 0, 200)  # Semi-transparent black
-        },
-        {
-            "text": "concert tickets",
-            "fontFace": cv2.FONT_HERSHEY_SIMPLEX,
-            "fontScale": 1.5,
-            "offset_y": 60,  # Vertical offset from first line
-            "text_color": (255, 255, 255),  # White text
-            "stroke_color": (0, 0, 0),      # Black stroke
-            "thickness": 3,
-            "line_spacing": 40,
-            "background_color": (0, 0, 0, 200)  # Semi-transparent black
-        }
-    ]
-
     # Face tracking state
-    position_buffer = deque(maxlen=5)
+    position_buffer = deque(maxlen=SMOOTHING_FRAMES)
     prev_x = TARGET_WIDTH // 2
-
 
     def apply_effects(frame, frame_idx, highlight_duration):
         # 1. Initial resize to target dimensions
@@ -277,53 +277,72 @@ def create_vid_gear_short(highlights):
             frame = frame[h//2 - TARGET_HEIGHT//2:h//2 + TARGET_HEIGHT//2,
                           w//2 - TARGET_WIDTH//2:w//2 + TARGET_WIDTH//2]
         
-        # 3. Apply dynamic face tracking crop
-        final_frame = dynamic_crop(frame)
+        # 3. Apply dynamic face tracking crop if enabled
+        if ENABLE_FACE_TRACKING:
+            final_frame = dynamic_crop(frame)
+        else:
+            final_frame = frame
         
-        # 4. Add multi-line text overlay
-        # 4. Add styled text with background
-        final_frame = add_text_with_background(final_frame)
+        # 4. Add text overlay if configured
+        if TEXT_LINES:
+            final_frame = add_text_with_background(final_frame)
         
         return final_frame
 
     def add_text_with_background(frame):
         # Calculate total text dimensions
         text_sizes = []
-        for cfg in TEXT_SETTINGS:
+        for cfg in TEXT_LINES:
+            if not cfg.get('text'):
+                continue
             (text_width, text_height), _ = cv2.getTextSize(
                 cfg["text"], 
-                cfg["fontFace"], 
-                cfg["fontScale"], 
-                cfg["thickness"]
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                cfg.get("fontScale", 1.5), 
+                STROKE_THICKNESS
             )
             text_sizes.append((text_width, text_height))
 
-        max_width = max([w for w, h in text_sizes])
-        total_height = sum([h for w, h in text_sizes]) + TEXT_SETTINGS[0]["line_spacing"]
+        if not text_sizes:
+            return frame
 
-        # Calculate background position
+        max_width = max([w for w, h in text_sizes])
+        total_height = sum([h for w, h in text_sizes]) + 40 * (len(text_sizes) - 1)
+
+        # Calculate background position based on TEXT_POSITION
         padding = 30
         bg_x1 = (TARGET_WIDTH - max_width) // 2 - padding
-        bg_y1 = 80  # Top position
+        
+        if TEXT_POSITION == "Top":
+            bg_y1 = 80
+        elif TEXT_POSITION == "Center":
+            bg_y1 = (TARGET_HEIGHT - total_height) // 2 - padding
+        else:  # Bottom
+            bg_y1 = TARGET_HEIGHT - total_height - 80 - padding
+            
         bg_x2 = bg_x1 + max_width + 2*padding
         bg_y2 = bg_y1 + total_height + padding
 
         # Draw semi-transparent background
         overlay = frame.copy()
         cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), 
-                     TEXT_SETTINGS[0]["background_color"][:3], -1)
-        frame = cv2.addWeighted(overlay, TEXT_SETTINGS[0]["background_color"][3]/255, 
-                               frame, 1 - TEXT_SETTINGS[0]["background_color"][3]/255, 0)
+                     (0, 0, 0), -1)
+        frame = cv2.addWeighted(overlay, TEXT_BG_OPACITY/255, 
+                               frame, 1 - TEXT_BG_OPACITY/255, 0)
 
         # Draw text with stroke effect
         y_position = bg_y1 + padding + text_sizes[0][1]
-        for i, cfg in enumerate(TEXT_SETTINGS):
+        for i, cfg in enumerate(TEXT_LINES):
+            if not cfg.get('text'):
+                continue
+                
             # Calculate text position
             (text_width, text_height), _ = cv2.getTextSize(
-                cfg["text"], cfg["fontFace"], cfg["fontScale"], cfg["thickness"]
+                cfg["text"], cv2.FONT_HERSHEY_SIMPLEX, 
+                cfg.get("fontScale", 1.5), STROKE_THICKNESS
             )
             x = (TARGET_WIDTH - text_width) // 2
-            y = y_position + (cfg.get("offset_y", 0) if i > 0 else 0)
+            y = y_position + (40 * i)
 
             # Draw stroke (8 directions)
             for dx in [-2, 0, 2]:
@@ -332,21 +351,20 @@ def create_vid_gear_short(highlights):
                         continue
                     frame = cv2.putText(
                         frame, cfg["text"], (x + dx, y + dy),
-                        cfg["fontFace"], cfg["fontScale"],
-                        cfg["stroke_color"], cfg["thickness"] + 2,
+                        cv2.FONT_HERSHEY_SIMPLEX, cfg.get("fontScale", 1.5),
+                        (0, 0, 0), STROKE_THICKNESS + 2,
                         cv2.LINE_AA
                     )
 
             # Draw main text
             frame = cv2.putText(
                 frame, cfg["text"], (x, y),
-                cfg["fontFace"], cfg["fontScale"],
-                cfg["text_color"], cfg["thickness"],
+                cv2.FONT_HERSHEY_SIMPLEX, cfg.get("fontScale", 1.5),
+                (255, 255, 255), STROKE_THICKNESS,
                 cv2.LINE_AA
             )
 
         return frame
-    
     
     def dynamic_crop(frame):
         nonlocal prev_x
@@ -370,7 +388,7 @@ def create_vid_gear_short(highlights):
         smoothed_x = np.mean(position_buffer)
         
         # Limit movement speed
-        max_delta = 400 * (1/24)
+        max_delta = MAX_TRACKING_SPEED * (1/fps)
         smoothed_x = np.clip(smoothed_x, prev_x - max_delta, prev_x + max_delta)
         prev_x = smoothed_x
         
@@ -397,217 +415,23 @@ def create_vid_gear_short(highlights):
     cap.release()
     writer.close()
 
-
-def create_short(highlights):
-    # Open video using VideoGear instead of MovieFileClip
-    stream = VideoGear(source="input_video.mp4").start()
-    
-    # Get video info using OpenCV to get duration and specs
-    cap = cv2.VideoCapture("input_video.mp4")
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    video_duration = frame_count / fps
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
-    
-    # Mr. Beast-style effects configuration
-    BEAST_STYLE = {
-        "zoom_speed": 0.08,
-        "text_style": {
-            "text": "EPIC CHALLENGE",
-            "font_size": 45,
-            "color": (255, 255, 255),  # White in BGR
-            "font": cv2.FONT_HERSHEY_DUPLEX,  # OpenCV font
-            "stroke_color": (0, 0, 0),  # Black in BGR
-            "stroke_width": 3
-        },
-        "transition_duration": 0.5,
-        "crossfade_duration": 0.3
-    }
-    
-    # Create WriteGear instance with appropriate parameters
-    # Modified to fix VAAPI issues
-    output_params = {
-        # Remove problematic parameters
-        "-input_framerate": fps,
-        
-        # Use CPU encoding instead of VAAPI since there are compatibility issues
-        "-vcodec": "libx264",
-        "-preset": "medium",
-        "-crf": "23",  # Quality setting (lower is better)
-        
-        # Audio settings
-        "-ac": "2",
-        "-ar": "44100",
-        "-acodec": "aac",
-        
-        # Other optimization settings
-        "-pix_fmt": "yuv420p",  # Standard pixel format
-        "-threads": "8",
-        "-g": "50",  # Keyframe interval
-        "-bf": "2"   # B-frames
-    }
-    
-    writer = WriteGear(output="beast_short.mp4", compression_mode=True, logging=True, **output_params)
-    
-    # Setup face detection
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    position_buffer = deque(maxlen=5)
-    prev_x = None
-    MAX_SPEED = 10  # Defined MAX_SPEED which was missing in original code
-    
-    # Process each highlight segment
-    for i, highlight in enumerate(highlights):
-        start = highlight["start"]
-        base_clip_duration = 15  # Desired duration of the core content
-        
-        # Determine buffer sizes
-        buffer_pre = 1.0 if i > 0 else 0.0
-        buffer_post = 1.0 if i < len(highlights) - 1 else 0.0
-        
-        # Calculate actual start and end times
-        actual_subclip_start = max(0, start - buffer_pre)
-        actual_subclip_end = min(video_duration, start + base_clip_duration + buffer_post)
-        
-        if actual_subclip_start >= actual_subclip_end:
-            print(f"Warning: Skipping highlight at {start}s due to invalid time range after buffering")
-            continue
-        
-        # Calculate frame positions
-        start_frame = int(actual_subclip_start * fps)
-        end_frame = int(actual_subclip_end * fps)
-        total_frames = end_frame - start_frame
-        
-        # Set the position in the video using OpenCV
-        cap = cv2.VideoCapture("input_video.mp4")
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        
-        # Process frames for this clip
-        for frame_idx in range(total_frames):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            current_time = frame_idx / fps
-            
-            # Apply zoom effect
-            zoom_factor = 1 + BEAST_STYLE["zoom_speed"] * np.sin(current_time * np.pi/15)
-            if zoom_factor != 1.0:
-                h, w = frame.shape[:2]
-                center_x, center_y = w//2, h//2
-                M = cv2.getRotationMatrix2D((center_x, center_y), 0, zoom_factor)
-                frame = cv2.warpAffine(frame, M, (w, h))
-            
-            # Add text overlay for first 2 seconds
-            if current_time < 2.0:
-                # Create text overlay
-                text = BEAST_STYLE["text_style"]["text"]
-                font = BEAST_STYLE["text_style"]["font"]
-                font_size = BEAST_STYLE["text_style"]["font_size"] / 30  # Adjust for OpenCV scale
-                color = BEAST_STYLE["text_style"]["color"]
-                stroke_color = BEAST_STYLE["text_style"]["stroke_color"]
-                stroke_width = BEAST_STYLE["text_style"]["stroke_width"]
-                
-                # Get text size
-                text_size = cv2.getTextSize(text, font, font_size, stroke_width)[0]
-                text_x = (frame.shape[1] - text_size[0]) // 2
-                text_y = 50 + text_size[1]  # Position at top with some padding
-                
-                # Draw text with stroke (outline)
-                cv2.putText(frame, text, (text_x, text_y), font, font_size, 
-                           stroke_color, stroke_width + 2, cv2.LINE_AA)
-                cv2.putText(frame, text, (text_x, text_y), font, font_size, 
-                           color, stroke_width, cv2.LINE_AA)
-            
-            # Apply face-centered crop
-            if frame is not None and frame.size > 0:  # Make sure frame is valid
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30,30))
-                
-                # Calculate target position
-                h, w = frame.shape[:2]
-                if len(faces) > 0:
-                    (x, y, w_face, h_face) = max(faces, key=lambda f: f[2]*f[3])
-                    target_x = x + w_face//2
-                else:
-                    # Smooth fallback with sine wave interpolation
-                    target_x = w/2 * (1 + 0.05 * np.sin(current_time * 2))
-                
-                # Apply moving average
-                position_buffer.append(target_x)
-                smoothed_x = np.mean(position_buffer)
-                
-                # Limit movement speed
-                if prev_x is not None:
-                    max_delta = MAX_SPEED * (1/fps)  # Max movement per frame
-                    smoothed_x = np.clip(smoothed_x, 
-                                      prev_x - max_delta, 
-                                      prev_x + max_delta)
-                prev_x = smoothed_x
-                
-                # Calculate crop
-                left = int(smoothed_x - 540)
-                left = max(0, min(left, w - 1080))
-                
-                # Ensure safe cropping bounds
-                if left + 1080 <= w:
-                    # Crop and resize to vertical format (1080x1920)
-                    cropped = frame[:, left:left+1080]
-                    if cropped.shape[0] != 1920:  # If height isn't already 1920
-                        frame = cv2.resize(cropped, (1080, 1920))
-                    else:
-                        frame = cropped
-                else:
-                    # Not enough width to crop, resize the whole frame instead
-                    frame = cv2.resize(frame, (1080, 1920))
-                
-                # Apply slide-in transition effect for first few frames
-                if i > 0 and frame_idx < int(BEAST_STYLE["transition_duration"] * fps):
-                    transition_progress = frame_idx / (BEAST_STYLE["transition_duration"] * fps)
-                    offset = int((1 - transition_progress) * w)
-                    blank = np.zeros_like(frame)
-                    
-                    # Ensure correct dimensions for hstack
-                    if offset < frame.shape[1]:
-                        # Create transition effect
-                        combined = np.hstack([blank[:, :offset], frame[:, offset:]])
-                        if combined.shape[1] > 1080:
-                            combined = combined[:, :1080]
-                        frame = combined
-                
-                # Write the processed frame
-                writer.write(frame)
-        
-        cap.release()
-    
-    # Close resources
-    stream.stop()
-    writer.close()
-    
 def download_video(url):
+    ydl_opts = {
+        'format': 'best[height<=1080]',  # Get best quality up to 1080p
+        'outtmpl': 'input_video.%(ext)s',
+        'merge_output_format': 'mp4',
+    }
+    
     try:
-        yt = YouTube(
-            url,
-            use_oauth=False,
-            allow_oauth_cache=True
-        )
-        print(f"Title: {yt.title}")
-        # New way to get the highest resolution stream
-        stream = yt.streams.filter(progressive=True, file_extension='mp4').get_highest_resolution()
-        stream.download(filename="input_video.mp4")
-        print("Download successful!")
-    except VideoUnavailable:
-        print(f"Video {url} is unavailable")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        print("Download successful with yt-dlp!")
+        
+        # Rename to expected filename
+        for file in os.listdir('.'):
+            if file.startswith('input_video.') and not file.endswith('.mp4'):
+                os.rename(file, 'input_video.mp4')
+                break
+                
     except Exception as e:
         print(f"Error: {str(e)}")
-
-# video_url="https://www.youtube.com/watch?v=zajUgQLviwk"
-# download_video(video_url)
-# print("Video downloaded successfully.")
-# segments = get_transcription()
-# print(segments)
-# print("Segmented successfully successfully.")
-# highlights = find_highlight_segments(segments)
-# create_short(highlights)
-

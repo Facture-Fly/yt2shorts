@@ -1,0 +1,19 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting sentence-transformers
+  Downloading sentence_transformers-4.1.0-py3-none-any.whl (345 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 345.7/345.7 KB 13.7 MB/s eta 0:00:00
+Collecting scipy
+  Downloading scipy-1.15.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (37.7 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 37.7/37.7 MB 11.4 MB/s eta 0:00:00
+Collecting Pillow
+  Using cached pillow-11.2.1-cp310-cp310-manylinux_2_28_x86_64.whl (4.6 MB)
+Collecting transformers<5.0.0,>=4.41.0
+  Downloading transformers-4.52.3-py3-none-any.whl (10.5 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.5/10.5 MB 12.7 MB/s eta 0:00:00
+Collecting scikit-learn
+  Downloading scikit_learn-1.6.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (13.5 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.5/13.5 MB 12.4 MB/s eta 0:00:00
+Collecting huggingface-hub>=0.20.0
+  Downloading huggingface_hub-0.32.0-py3-none-any.whl (509 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 509.3/509.3 KB 14.4 MB/s eta 0:00:00
+Collecting torch>=1.11.0
