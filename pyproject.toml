@@ -3,36 +3,44 @@ name = "poeytshorts"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "elhadji",email = "elhadji.sarr@outlook.com"}
+    {name = "elhadji", email = "elhadji.sarr@outlook.com"}
 ]
 readme = "README.md"
 requires-python = "^3.10"
-dependencies = [
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz",
-    "moviepy (==2.1.2)",
-    "nrclex (==3.0.0)",
-    "openai-whisper (==20240930)",
-    "opencv-python (==4.11.0.86)",
-    "pip (==22.0.2)",
-    "pytube (==15.0.0)",
-    "pytubefix (==8.13.1)",
-    "spacy (==3.7.2)",
-    "vadersentiment (==3.3.2)",
-    "uvloop (>=0.21.0,<0.22.0)",
-    "vidgear[asyncio] (>=0.3.3,<0.4.0)",
-    "faster-whisper (>=1.1.1,<2.0.0)",
-    "streamlit (>=1.45.1,<2.0.0)",
-    "yt-dlp (>=2025.5.22,<2026.0.0)",
-    "librosa (>=0.11.0,<0.12.0)",
-    "scikit-learn (==1.6.1)",
-    "sentence-transformers (>=4.1.0,<5.0.0)",
-    "transformers (>=4.52.3,<5.0.0)",
-    "psutil (>=7.0.0,<8.0.0)"
-]
+
+[[tool.poetry.source]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/"
+priority = "supplemental"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = { version = "2.3.0", source = "pytorch" }
+torchvision = { version = "0.18.0", source = "pytorch" }
+torchaudio = { version = "2.3.0", source = "pytorch" }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz" }
+moviepy = "2.1.2"
+nrclex = "3.0.0"
+openai-whisper = "20240930"
+opencv-python = "4.11.0.86"
+pip = "22.0.2"
+pytube = "15.0.0"
+pytubefix = "8.13.1"
+spacy = "3.7.2"
+vadersentiment = "3.3.2"
+uvloop = ">=0.21.0,<0.22.0"
+faster-whisper = ">=1.1.1,<2.0.0"
+streamlit = ">=1.45.1,<2.0.0"
+yt-dlp = ">=2025.5.22,<2026.0.0"
+librosa = ">=0.11.0,<0.12.0"
+scikit-learn = "1.6.1"
+sentence-transformers = ">=4.1.0,<5.0.0"
+transformers = ">=4.52.3,<5.0.0"
+psutil = ">=7.0.0,<8.0.0"
+vidgear = {extras = ["asyncio"], version = "^0.3.3"}
 
 [tool.poetry]
 packages = [{include = "poeytshorts", from = "src"}]
-
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

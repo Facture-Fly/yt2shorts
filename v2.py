@@ -89,9 +89,9 @@ if __name__ == "__main__":
     }
 
     # Create shorts
-    # created_videos = create_shorts_from_viral_segments(
-    #     viral_segments=shorts,
-    #     input_video_path="input_video.mp4",
-    #     output_dir="viral_shorts",
-    #     **video_params
-    # )
+    created_videos = create_shorts_from_viral_segments(
+        viral_segments=shorts,
+        input_video_path="input_video.mp4",
+        output_dir="viral_shorts",
+        **video_params
+    )
