@@ -46,12 +46,11 @@ def get_video_checksum(file_path):
     hash_data = f"{file_stat.st_size}-{file_stat.st_mtime_ns}"
     return hashlib.md5(hash_data.encode()).hexdigest()
 
-def get_transcription(force_refresh=False, model_version="base"):
+def get_transcription(force_refresh=False, model_version="base", input_file=None):
     # Create cache directory if needed
     os.makedirs(TRANSCRIPTION_CACHE_DIR, exist_ok=True)
     
-    video_file = "input_video.mp4"
-    cache_key = f"{get_video_checksum(video_file)}_{model_version}"
+    cache_key = f"{get_video_checksum(input_file)}_{model_version}"
     cache_path = os.path.join(TRANSCRIPTION_CACHE_DIR, f"{cache_key}.pkl")
     
     # Return cached result if available
@@ -64,7 +63,7 @@ def get_transcription(force_refresh=False, model_version="base"):
     #model = whisper.load_model(model_version, device="cuda")
     #TODO fix cuda using cpu for now
     model = WhisperModel(model_version)
-    segments, info = model.transcribe(video_file)
+    segments, info = model.transcribe(input_file)
     
     segments_list = list(segments)
     # Cache the results

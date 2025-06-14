@@ -10,16 +10,16 @@ requires-python = "^3.10"
 
 [[tool.poetry.source]]
 name = "pytorch"
-url = "https://download.pytorch.org/whl/"
+url = "https://download.pytorch.org/whl/nightly/rocm6.4/"
 priority = "supplemental"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-torch = { version = "2.3.0", source = "pytorch" }
-torchvision = { version = "0.18.0", source = "pytorch" }
-torchaudio = { version = "2.3.0", source = "pytorch" }
+torch = { version = ">=2.0.0", source = "pytorch" }
+torchvision = { version = ">=0.20.0", source = "pytorch" }
+torchaudio = { version = ">=2.0.0", source = "pytorch" }
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz" }
-moviepy = "2.1.2"
+moviepy = "^1.0.3"
 nrclex = "3.0.0"
 openai-whisper = "20240930"
 opencv-python = "4.11.0.86"

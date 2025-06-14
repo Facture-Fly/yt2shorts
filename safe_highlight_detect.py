@@ -1,4 +1,8 @@
 import torch
+import os
+# Disable meta device for transformers to avoid meta tensor issues
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
 from transformers import AutoTokenizer, AutoModel
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
@@ -22,6 +26,7 @@ import gc
 import threading
 from queue import Queue
 import numpy as np
+import shutil
 
 def score_segments(self, segments, audio_path=None, video_path=None, 
                       processing_mode='auto', max_workers=None, batch_size=32):
@@ -75,8 +80,8 @@ def _extract_features_worker_gpu(args):
             print(f"⚠️ High memory usage ({psutil.virtual_memory().percent:.1f}%), skipping segment")
             return None
         
-        # Create detector instance with GPU support
-        detector = ViralPatternDetector(model_name=model_name, device=device)
+        # Create detector instance - force CPU in workers to avoid meta tensor issues
+        detector = ViralPatternDetector(model_name=model_name, device='cpu')
         features = detector.extract_multimodal_features(segment, audio_path, video_path)
         
         # Clear GPU cache periodically
@@ -109,7 +114,7 @@ def _extract_features_worker(args):
                 print("❌ Memory too high, skipping segment")
                 return None
         
-        # Create detector instance in worker
+        # Create detector instance in worker - force CPU to avoid meta tensor issues
         detector = ViralPatternDetector(model_name=model_name, device='cpu')
         features = detector.extract_multimodal_features(segment, audio_path, video_path)
         return features
@@ -123,29 +128,88 @@ def _extract_features_worker(args):
 class ViralPatternDetector:
     """ML-based viral content detection with GPU support and memory management"""
     
-    def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2', device=None):
-        # Auto-detect best device
+    def __init__(self, model_name='./models/sentence-transformers/all-MiniLM-L6-v2', device=None):
         if device is None:
-            if torch.cuda.is_available():
-                device = 'cuda'
-                print(f"🚀 Using GPU: {torch.cuda.get_device_name(0)}")
-            else:
-                device = 'cpu'
-                print("🖥️ Using CPU processing")
+            device = self._detect_and_test_device(model_name)
         
         self.device = device
         self.model_name = model_name
         
-        # Load semantic understanding model with device support
-        self.sentence_model = SentenceTransformer(model_name, device=device)
+        print(f"🖥️ Final device selection: {self.device}")
         
-        # For emotion detection (keep on CPU to save GPU memory)
-        self.emotion_tokenizer = AutoTokenizer.from_pretrained("j-hartmann/emotion-english-distilroberta-base")
-        self.emotion_model = AutoModel.from_pretrained("j-hartmann/emotion-english-distilroberta-base")
+        # Load models with tested device
+        self.sentence_model = SentenceTransformer(model_name, device=self.device)
         
-        # Statistical thresholds
+        self.emotion_tokenizer = AutoTokenizer.from_pretrained(
+            "./models/j-hartmann/emotion-english-distilroberta-base"
+        )
+        # Load model avoiding meta tensors completely
+        try:
+            self.emotion_model = AutoModel.from_pretrained(
+                "./models/j-hartmann/emotion-english-distilroberta-base",
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=False,  # Disable to avoid meta tensors
+                device_map=None  # Disable device_map to avoid meta tensors
+            )
+            # Move to device after loading
+            self.emotion_model = self.emotion_model.to(self.device)
+        except Exception as e:
+            print(f"⚠️ Could not load emotion model on {self.device}: {e}")
+            print("🔄 Falling back to CPU-only loading...")
+            try:
+                self.emotion_model = AutoModel.from_pretrained(
+                    "./models/j-hartmann/emotion-english-distilroberta-base",
+                    torch_dtype=torch.float32,
+                    low_cpu_mem_usage=False
+                )
+                self.emotion_model = self.emotion_model.to('cpu')
+                self.device = 'cpu'  # Force CPU if GPU loading fails
+            except Exception as e2:
+                print(f"❌ Final fallback failed: {e2}")
+                raise e2
+        
         self.anomaly_threshold = 2.0
         self.energy_spike_threshold = 1.5
+    
+    def _detect_and_test_device(self, model_name):
+        """Detect GPU and test if it actually works with our models"""
+        
+        if not torch.cuda.is_available():
+            print("🖥️ No GPU detected - using CPU")
+            return 'cpu'
+        
+        # Get GPU info
+        device_name = torch.cuda.get_device_name(0)
+        print(f"🎮 GPU detected: {device_name}")
+        
+        # Check if it's AMD
+        is_amd = 'AMD' in device_name or 'Radeon' in device_name
+        
+        if is_amd:
+            print("🔴 AMD GPU detected - testing compatibility...")
+            
+            try:
+                # Test basic operations first
+                test_tensor = torch.randn(100, 100).cuda()
+                result = torch.mm(test_tensor, test_tensor)
+                print("✅ Basic GPU operations work")
+                
+                # Test SentenceTransformer specifically
+                print("🧪 Testing SentenceTransformer on AMD GPU...")
+                test_model = SentenceTransformer(model_name, device='cuda')
+                test_embedding = test_model.encode("test", show_progress_bar=False)
+                print("✅ SentenceTransformer works on AMD GPU!")
+                
+                return 'cuda'
+                
+            except Exception as e:
+                print(f"❌ AMD GPU test failed: {e}")
+                print("🔄 AMD GPU detected but incompatible - falling back to CPU")
+                print("   This is common with ROCm and certain model operations")
+                return 'cpu'
+        else:
+            print("🟢 NVIDIA GPU detected - should work fine")
+            return 'cuda'
         
     def extract_multimodal_features(self, segment, audio_path=None, video_path=None):
         """Extract features from text, audio, and video with GPU acceleration"""

@@ -66,10 +66,11 @@ def create_vid_gear_short(highlights, input_video_path, output_video_path=None, 
         "-preset": VIDEO_PRESET,
         "-crf": str(CRF_VALUE),
         "-pix_fmt": "yuv420p",
+        "-acodec": "copy",
         "-threads": "8",
         "-g": "50",
         "-bf": "2",
-        "-movflags": "+faststart"  # Enable streaming
+        "-movflags": "+faststart"
     }
     
     try:
@@ -107,7 +108,7 @@ def create_vid_gear_short(highlights, input_video_path, output_video_path=None, 
     def apply_effects(frame, frame_idx, highlight_duration, segment_info=None):
         """Apply visual effects to frame"""
         try:
-            # 1. Initial resize to target dimensions
+            # 1. Initial resize to target   dimensions
             original_h, original_w = frame.shape[:2]
             
             # Calculate aspect ratio preserving resize
@@ -437,21 +438,21 @@ def create_shorts_from_viral_segments(viral_segments, input_video_path, output_d
         print(f"Text: {segment.get('highlight_text', '')[:80]}...")
         print(f"{'='*50}")
         
-        output_path = os.path.join(output_dir, f"{base_name}_short_{i+1:02d}.mp4")
+    output_path = os.path.join(output_dir, f"{base_name}_short_generated.mp4")
         
         # Create individual short
-        success = create_vid_gear_short(
-            highlights=[segment],
-            input_video_path=input_video_path,
-            output_video_path=output_path,
-            **params
-        )
-        
-        if success:
-            created_videos.append(output_path)
-            print(f"✅ Created: {output_path}")
-        else:
-            print(f"❌ Failed to create: {output_path}")
+    success = create_vid_gear_short(
+        highlights=viral_segments,
+        input_video_path=input_video_path,
+        output_video_path=output_path,
+        **params
+    )
+    
+    if success:
+        created_videos.append(output_path)
+        print(f"✅ Created: {output_path}")
+    else:
+        print(f"❌ Failed to create: {output_path}")
     
     print(f"\n🎉 Successfully created {len(created_videos)} short videos!")
     return created_videos
