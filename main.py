@@ -55,7 +55,7 @@ def generate(
     Generate viral clips from a YouTube video or local file.
     
     Examples:
-        python main.py generate "https://youtube.com/watch?v=VIDEO_ID"
+        python main.py generate "https://www.youtube.com/watch?v=Pv0iVoSZzN8"
         python main.py generate "/path/to/video.mp4" --output ./clips --max-clips 5
         python main.py generate "URL" --resolution 720p --style energetic
     """
