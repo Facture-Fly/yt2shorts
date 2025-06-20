@@ -1,0 +1,7 @@
+yt-dlp
+requests
+tqdm
+rich
+typer
+pydantic
+pydantic-settings

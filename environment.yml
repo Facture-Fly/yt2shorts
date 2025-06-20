@@ -1,0 +1,44 @@
+name: viral
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - opencv
+  - ffmpeg
+  - pip
+  - pip:
+    - yt-dlp
+    - openai-whisper
+    - transformers
+    - accelerate
+    - bitsandbytes
+    - datasets
+    - optimum
+    - sentence-transformers
+    - ultralytics
+    - pillow
+    - matplotlib
+    - seaborn
+    - pandas
+    - scikit-learn
+    - moviepy
+    - librosa
+    - soundfile
+    - requests
+    - beautifulsoup4
+    - lxml
+    - pydantic
+    - typer
+    - rich
+    - tqdm
+    - joblib
+    - huggingface-hub
+    - safetensors
+    - tokenizers
+    - diffusers
+    - controlnet-aux
+    # - xformers  # Skip for now due to CUTLASS submodule issues
+    - invisible-watermark
+    - clip-by-openai
