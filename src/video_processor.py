@@ -71,7 +71,7 @@ class VideoProcessor:
             output_path = self.temp_dir / f"{video_path.stem}_audio.{config.AUDIO_FORMAT}"
         
         cmd = [
-            'ffmpeg', '-i', str(video_path), '-vn', '-acodec', 'pcm_s16le',
+            'ffmpeg', '-i', str(video_path), '-vn', '-acodec', 'libmp3lame',
             '-ar', '16000', '-ac', '1', '-y', str(output_path)
         ]
         

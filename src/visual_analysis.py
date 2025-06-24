@@ -113,7 +113,7 @@ class VisualAnalyzer:
         prev_frame_features = None
         scene_change_threshold = 0.3
         
-        for i, frame_path in enumerate(track(frame_paths, description="Processing frames")):
+        for i, frame_path in enumerate(frame_paths):
             timestamp = i / fps
             
             try:
@@ -405,7 +405,7 @@ class VisualAnalyzer:
         
         console.print("[blue]Finding best thumbnail frame[/blue]")
         
-        for frame_path in track(frame_paths[:min(30, len(frame_paths))], description="Evaluating frames"):
+        for frame_path in frame_paths[:min(30, len(frame_paths))]:
             analysis = self.analyze_single_frame(frame_path)
             score = analysis.get('highlight_score', 0.0)
             

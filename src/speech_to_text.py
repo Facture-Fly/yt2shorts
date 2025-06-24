@@ -68,37 +68,6 @@ class SpeechToText:
         try:
             console.print(f"[blue]Transcribing audio: {audio_path}[/blue]")
             
-            # Load and preprocess audio
-            audio = whisper.load_audio(str(audio_path))
-            audio = whisper.pad_or_trim(audio)
-            
-            # Make log-Mel spectrogram and move to the same device as the model
-            mel = whisper.log_mel_spectrogram(audio).to(self.model.device)
-            
-            # Detect language if not specified
-            if not language:
-                _, probs = self.model.detect_language(mel)
-                language = max(probs, key=probs.get)
-                console.print(f"[dim]Detected language: {language}[/dim]")
-            
-            # Decode the audio with timestamps
-            options = whisper.DecodingOptions(
-                language=language,
-                task="transcribe",
-                temperature=0.0,
-                best_of=1,
-                beam_size=1,
-                patience=None,
-                length_penalty=None,
-                suppress_tokens="-1",
-                initial_prompt=None,
-                condition_on_previous_text=True,
-                fp16=torch.cuda.is_available(),
-                compression_ratio_threshold=2.4,
-                logprob_threshold=-1.0,
-                no_speech_threshold=0.6,
-            )
-            
             # Transcribe with word-level timestamps
             result = self.model.transcribe(
                 str(audio_path),

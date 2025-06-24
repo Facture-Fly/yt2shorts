@@ -72,7 +72,7 @@ python main.py config-info
 Generate viral clips from a YouTube video:
 
 ```bash
-python main.py generate "https://youtube.com/watch?v=VIDEO_ID"
+python main.py generate "https://www.youtube.com/watch?v=Pv0iVoSZzN8"
 ```
 
 ### Advanced Usage

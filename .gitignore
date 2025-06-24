@@ -1,0 +1,11 @@
+models/
+__pycache__/
+media/
+media_v3/
+outputs/
+.claude/
+v4_architecture/
+yolov8n.pt
+.v3*/
+data/
+temp/

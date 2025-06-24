@@ -13,7 +13,7 @@ dependencies:
       - torch==2.1.2+cu121
       - torchvision==0.16.2+cu121
       - torchaudio==2.1.2+cu121
-      - yt-dlp==2023.12.30
+      - yt-dlp==2025.6.9
       - openai-whisper==20231117
       - transformers==4.36.2
       - accelerate==0.25.0

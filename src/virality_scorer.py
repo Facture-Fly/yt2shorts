@@ -400,7 +400,7 @@ class ViralityScorer:
         # Score each window
         window_scores = []
         
-        for start_time, end_time in track(windows, description="Scoring time windows"):
+        for start_time, end_time in windows:
             # Get relevant data for this window
             window_transcript = [seg for seg in transcript_segments 
                                if seg.start >= start_time and seg.end <= end_time]
