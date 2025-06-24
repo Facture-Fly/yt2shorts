@@ -118,9 +118,9 @@ class ViralClipPipeline:
                 
                 progress.update(overall_task, completed=75)
                 
-                # Step 6: Generate Single Long Clip (100%)
-                progress.update(current_task, description="[green]Creating viral highlight clip...", completed=0)
-                clips, thumbnails = self._generate_single_long_clip(
+                # Step 6: Generate TikTok Viral Clip (100%)
+                progress.update(current_task, description="[green]Creating TikTok viral clip...", completed=0)
+                clips, thumbnails = self._generate_tiktok_viral_clip(
                     video_path, viral_moments, clip_style,
                     progress, current_task
                 )
@@ -345,6 +345,51 @@ class ViralClipPipeline:
                 
         except Exception as e:
             console.print(f"[yellow]⚠️  Failed to create viral highlight: {e}[/yellow]")
+        
+        return clips, thumbnails
+
+    def _generate_tiktok_viral_clip(self, video_path: Path, viral_moments: List[ViralMoment],
+                                   clip_style: Optional[ClipStyle],
+                                   progress: Progress, task: TaskID) -> tuple[List[Path], List[Path]]:
+        """Generate a TikTok-style viral clip with rapid cuts and high engagement."""
+        
+        if not viral_moments:
+            console.print("[yellow]⚠️  No viral moments to generate clip from[/yellow]")
+            return [], []
+        
+        clips = []
+        thumbnails = []
+        
+        try:
+            progress.update(task, description="[green]Creating TikTok viral clip...", completed=20)
+            
+            # Create TikTok-style viral clip with rapid cuts
+            target_duration = config.TARGET_CLIP_DURATION
+            clip_path = self.clip_assembler.create_tiktok_viral_clip(
+                video_path, viral_moments, target_duration, clip_style
+            )
+            
+            progress.update(task, completed=80)
+            
+            if clip_path:
+                clips.append(clip_path)
+                
+                # Create viral thumbnail from the best moment
+                best_moment = max(viral_moments, key=lambda m: m.virality_score)
+                thumbnail_path = self.clip_assembler.create_thumbnail(
+                    video_path, best_moment
+                )
+                
+                if thumbnail_path:
+                    thumbnails.append(thumbnail_path)
+                
+                progress.update(task, completed=100)
+                console.print(f"[blue]🎬 Generated TikTok viral clip with rapid cuts[/blue]")
+            else:
+                console.print("[yellow]⚠️  Failed to create TikTok viral clip[/yellow]")
+                
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Failed to create TikTok viral clip: {e}[/yellow]")
         
         return clips, thumbnails
 

@@ -33,6 +33,13 @@ if PYDANTIC_AVAILABLE:
         MAX_CLIP_DURATION: int = 120  # seconds
         TARGET_CLIP_DURATION: int = 90  # seconds
         
+        # TikTok-style viral editing
+        VIRAL_SEGMENT_MIN_DURATION: float = 2.0  # seconds
+        VIRAL_SEGMENT_MAX_DURATION: float = 8.0  # seconds
+        VIRAL_SEGMENT_TARGET_DURATION: float = 4.0  # seconds
+        MAX_VIRAL_SEGMENTS: int = 20  # Maximum segments per clip
+        TRANSITION_DURATION: float = 0.3  # seconds
+        
         # Model configurations
         WHISPER_MODEL: str = "base"
         WHISPER_DEVICE: str = "cuda" if os.getenv("CUDA_VISIBLE_DEVICES") else "cpu"
@@ -89,6 +96,13 @@ else:
             self.MIN_CLIP_DURATION = 60
             self.MAX_CLIP_DURATION = 120
             self.TARGET_CLIP_DURATION = 90
+            
+            # TikTok-style viral editing
+            self.VIRAL_SEGMENT_MIN_DURATION = 2.0
+            self.VIRAL_SEGMENT_MAX_DURATION = 8.0
+            self.VIRAL_SEGMENT_TARGET_DURATION = 4.0
+            self.MAX_VIRAL_SEGMENTS = 20
+            self.TRANSITION_DURATION = 0.3
             
             # Model configurations
             self.WHISPER_MODEL = "base"

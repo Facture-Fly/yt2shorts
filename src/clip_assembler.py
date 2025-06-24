@@ -449,6 +449,75 @@ class ClipAssembler:
         console.print(f"[green]Created {len(clips)} viral clips successfully[/green]")
         return clips
     
+    def create_tiktok_viral_clip(self, video_path: Path, viral_moments: List[ViralMoment],
+                                target_duration: float = 90.0,
+                                style: Optional[ClipStyle] = None,
+                                output_path: Optional[Path] = None) -> Optional[Path]:
+        """Create a TikTok-style viral clip with rapid cuts and high engagement."""
+        
+        if not viral_moments:
+            console.print("[yellow]No viral moments to create clip from[/yellow]")
+            return None
+        
+        style = style or self.default_style
+        
+        if not output_path:
+            output_path = self.output_dir / f"tiktok_viral_{target_duration:.0f}s.mp4"
+        
+        console.print(f"[blue]Creating TikTok-style viral clip ({target_duration}s) from {len(viral_moments)} moments[/blue]")
+        
+        try:
+            # Create rapid-fire segments with optimal pacing
+            viral_segments = self._create_viral_segments(viral_moments, target_duration)
+            
+            if not viral_segments:
+                console.print("[yellow]Could not create viral segments[/yellow]")
+                return None
+            
+            console.print(f"[blue]Processing {len(viral_segments)} viral segments...[/blue]")
+            
+            # Extract all segments
+            segment_clips = []
+            for i, segment in enumerate(viral_segments):
+                console.print(f"[blue]Extracting segment {i+1}/{len(viral_segments)}: {segment['start_time']:.1f}s-{segment['end_time']:.1f}s[/blue]")
+                clip = self._extract_viral_segment(video_path, segment, style, i)
+                if clip:
+                    segment_clips.append(clip)
+                else:
+                    console.print(f"[yellow]Segment {i+1} extraction failed[/yellow]")
+            
+            if not segment_clips:
+                console.print("[red]No segments were extracted[/red]")
+                return None
+            
+            console.print(f"[blue]Successfully extracted {len(segment_clips)} segments, creating compilation...[/blue]")
+            
+            # Create viral compilation with rapid cuts and effects
+            viral_compilation = self._create_viral_compilation(segment_clips, style)
+            if not viral_compilation:
+                console.print("[red]Failed to create viral compilation[/red]")
+                return None
+            
+            console.print(f"[blue]Compilation created, applying final effects...[/blue]")
+            
+            # Final viral post-processing
+            final_clip = self._apply_viral_effects(viral_compilation, style, output_path)
+            if final_clip:
+                # Verify final output
+                if output_path.exists() and output_path.stat().st_size > 1024:
+                    console.print(f"[green]TikTok viral clip created: {output_path} ({output_path.stat().st_size/1024/1024:.1f}MB)[/green]")
+                    return output_path
+                else:
+                    console.print(f"[red]Final clip is empty or missing: {output_path}[/red]")
+                    return None
+            
+            console.print("[red]Final effects processing failed[/red]")
+            return None
+            
+        except Exception as e:
+            console.print(f"[red]Error creating TikTok viral clip: {e}[/red]")
+            return None
+
     def create_single_long_clip(self, video_path: Path, viral_moments: List[ViralMoment],
                                target_duration: float = 90.0,
                                style: Optional[ClipStyle] = None,
@@ -636,6 +705,236 @@ class ClipAssembler:
             output_path = self.output_dir / "viral_compilation.mp4"
         
         return self._simple_concatenate(clip_paths)
+    
+    def _create_viral_segments(self, viral_moments: List[ViralMoment], 
+                              target_duration: float) -> List[Dict[str, Any]]:
+        """Create optimized viral segments for TikTok-style editing."""
+        
+        segments = []
+        total_duration = 0.0
+        
+        # Sort moments by virality score
+        sorted_moments = sorted(viral_moments, key=lambda m: m.virality_score, reverse=True)
+        
+        for moment in sorted_moments:
+            if total_duration >= target_duration:
+                break
+            
+            # Break long moments into shorter viral segments
+            moment_duration = moment.duration
+            remaining_target = target_duration - total_duration
+            
+            if moment_duration <= config.VIRAL_SEGMENT_MAX_DURATION:
+                # Moment is already optimal size
+                segment_duration = min(moment_duration, remaining_target)
+                segments.append({
+                    'start_time': moment.start_time,
+                    'end_time': moment.start_time + segment_duration,
+                    'virality_score': moment.virality_score,
+                    'type': 'highlight',
+                    'transcript_segments': moment.transcript_segments,
+                    'original_moment': moment
+                })
+                total_duration += segment_duration
+            else:
+                # Break long moment into multiple segments
+                current_start = moment.start_time
+                segments_from_moment = 0
+                max_segments_per_moment = 3  # Limit segments per moment
+                
+                while (current_start < moment.end_time and 
+                       total_duration < target_duration and 
+                       segments_from_moment < max_segments_per_moment):
+                    
+                    remaining_in_moment = moment.end_time - current_start
+                    remaining_target = target_duration - total_duration
+                    
+                    # Use target segment duration but adapt to available time
+                    segment_duration = min(
+                        config.VIRAL_SEGMENT_TARGET_DURATION,
+                        remaining_in_moment,
+                        remaining_target
+                    )
+                    
+                    if segment_duration < config.VIRAL_SEGMENT_MIN_DURATION:
+                        break
+                    
+                    # Find relevant transcript for this segment
+                    segment_transcript = [
+                        seg for seg in moment.transcript_segments 
+                        if seg.start >= current_start and seg.end <= current_start + segment_duration
+                    ]
+                    
+                    segments.append({
+                        'start_time': current_start,
+                        'end_time': current_start + segment_duration,
+                        'virality_score': moment.virality_score * (1 - segments_from_moment * 0.1),  # Slight decrease for later segments
+                        'type': 'rapid_cut',
+                        'transcript_segments': segment_transcript,
+                        'original_moment': moment
+                    })
+                    
+                    current_start += segment_duration
+                    total_duration += segment_duration
+                    segments_from_moment += 1
+            
+            # Stop if we have enough segments
+            if len(segments) >= config.MAX_VIRAL_SEGMENTS:
+                break
+        
+        # Sort segments by start time for chronological flow
+        segments.sort(key=lambda s: s['start_time'])
+        
+        console.print(f"[blue]Created {len(segments)} viral segments totaling {total_duration:.1f}s[/blue]")
+        return segments
+    
+    def _extract_viral_segment(self, video_path: Path, segment: Dict[str, Any], 
+                              style: ClipStyle, index: int) -> Optional[Path]:
+        """Extract a single viral segment with optimizations."""
+        
+        start_time = segment['start_time']
+        end_time = segment['end_time']
+        duration = end_time - start_time
+        
+        output_path = self.temp_dir / f"viral_segment_{index:03d}_{start_time:.1f}s.mp4"
+        
+        # Minimal padding to avoid issues
+        padding = 0.05
+        padded_start = max(0, start_time - padding)
+        padded_duration = duration + (2 * padding)
+        
+        # Simplified command without complex scaling
+        cmd = [
+            'ffmpeg', '-i', str(video_path),
+            '-ss', str(padded_start),
+            '-t', str(padded_duration),
+            '-c:v', 'libx264',
+            '-c:a', 'aac',
+            '-preset', 'fast',
+            '-crf', '23',
+            '-avoid_negative_ts', 'make_zero',  # Avoid timing issues
+            '-y', str(output_path)
+        ]
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            # Verify the output file exists and has content
+            if output_path.exists() and output_path.stat().st_size > 1024:  # At least 1KB
+                console.print(f"[green]Extracted segment {index}: {duration:.1f}s[/green]")
+                return output_path
+            else:
+                console.print(f"[yellow]Segment {index} file is empty or too small[/yellow]")
+                return None
+                
+        except subprocess.CalledProcessError as e:
+            console.print(f"[yellow]Failed to extract viral segment {index}: {e.stderr if e.stderr else str(e)}[/yellow]")
+            return None
+    
+    def _create_viral_compilation(self, segment_clips: List[Path], style: ClipStyle) -> Optional[Path]:
+        """Create viral compilation with rapid cuts and transitions."""
+        
+        output_path = self.temp_dir / "viral_compilation.mp4"
+        
+        if len(segment_clips) == 1:
+            console.print("[blue]Single segment, copying directly[/blue]")
+            import shutil
+            shutil.copy2(segment_clips[0], output_path)
+            return output_path
+        
+        # Verify all segments exist and have content
+        valid_clips = []
+        for clip in segment_clips:
+            if clip.exists() and clip.stat().st_size > 1024:
+                valid_clips.append(clip)
+            else:
+                console.print(f"[yellow]Skipping invalid segment: {clip}[/yellow]")
+        
+        if not valid_clips:
+            console.print("[red]No valid segments to concatenate[/red]")
+            return None
+        
+        if len(valid_clips) == 1:
+            import shutil
+            shutil.copy2(valid_clips[0], output_path)
+            return output_path
+        
+        # Create concat list
+        input_list = self.temp_dir / "viral_segments.txt"
+        
+        try:
+            with open(input_list, 'w') as f:
+                for clip_path in valid_clips:
+                    f.write(f"file '{clip_path.absolute()}'\n")
+            
+            # Simplified concatenation without complex filters
+            cmd = [
+                'ffmpeg', '-f', 'concat', '-safe', '0',
+                '-i', str(input_list),
+                '-c', 'copy',  # Copy streams without re-encoding
+                '-avoid_negative_ts', 'make_zero',
+                '-y', str(output_path)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            # Verify output
+            if output_path.exists() and output_path.stat().st_size > 1024:
+                console.print(f"[green]Viral compilation created with {len(valid_clips)} segments[/green]")
+                return output_path
+            else:
+                console.print("[yellow]Compilation file is empty, trying fallback[/yellow]")
+                return self._simple_concatenate(valid_clips)
+            
+        except subprocess.CalledProcessError as e:
+            console.print(f"[yellow]Viral compilation failed: {e.stderr if e.stderr else str(e)}[/yellow]")
+            return self._simple_concatenate(valid_clips)
+    
+    def _apply_viral_effects(self, video_path: Path, style: ClipStyle, output_path: Path) -> Optional[Path]:
+        """Apply viral TikTok-style effects and optimizations."""
+        
+        # Verify input file
+        if not video_path.exists() or video_path.stat().st_size < 1024:
+            console.print(f"[red]Input video invalid: {video_path}[/red]")
+            return None
+        
+        # Simple processing without complex filters to avoid black screen
+        cmd = [
+            'ffmpeg', '-i', str(video_path),
+            '-c:v', 'libx264',
+            '-preset', 'fast',  # Faster processing
+            '-crf', '23',  # Good quality
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-movflags', '+faststart',
+            '-avoid_negative_ts', 'make_zero',
+            '-y', str(output_path)
+        ]
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            # Verify output
+            if output_path.exists() and output_path.stat().st_size > 1024:
+                console.print("[green]Viral clip finalized successfully[/green]")
+                return output_path
+            else:
+                console.print("[yellow]Final output is empty, copying input[/yellow]")
+                import shutil
+                shutil.copy2(video_path, output_path)
+                return output_path
+                
+        except subprocess.CalledProcessError as e:
+            console.print(f"[yellow]Final processing failed: {e.stderr if e.stderr else str(e)}[/yellow]")
+            # Fallback to simple copy
+            try:
+                import shutil
+                shutil.copy2(video_path, output_path)
+                console.print("[blue]Using original compilation as fallback[/blue]")
+                return output_path
+            except Exception as copy_error:
+                console.print(f"[red]Copy fallback failed: {copy_error}[/red]")
+                return None
     
     def cleanup_temp_files(self):
         """Clean up temporary files created during processing."""
