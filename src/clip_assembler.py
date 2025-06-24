@@ -449,6 +449,181 @@ class ClipAssembler:
         console.print(f"[green]Created {len(clips)} viral clips successfully[/green]")
         return clips
     
+    def create_single_long_clip(self, video_path: Path, viral_moments: List[ViralMoment],
+                               target_duration: float = 90.0,
+                               style: Optional[ClipStyle] = None,
+                               output_path: Optional[Path] = None) -> Optional[Path]:
+        """Create a single long clip by concatenating the best viral moments."""
+        
+        if not viral_moments:
+            console.print("[yellow]No viral moments to create clip from[/yellow]")
+            return None
+        
+        style = style or self.default_style
+        
+        if not output_path:
+            output_path = self.output_dir / f"viral_highlight_{target_duration:.0f}s.mp4"
+        
+        console.print(f"[blue]Creating single {target_duration}s viral clip from {len(viral_moments)} moments[/blue]")
+        
+        try:
+            # Select and adjust moments to fit target duration
+            selected_moments = self._select_moments_for_duration(viral_moments, target_duration)
+            
+            if not selected_moments:
+                console.print("[yellow]Could not select suitable moments for target duration[/yellow]")
+                return None
+            
+            # Create individual clip segments
+            clip_segments = []
+            for i, moment in enumerate(selected_moments):
+                segment_path = self._extract_base_clip(video_path, moment, style)
+                if segment_path:
+                    clip_segments.append(segment_path)
+                else:
+                    console.print(f"[yellow]Failed to extract segment {i+1}[/yellow]")
+            
+            if not clip_segments:
+                console.print("[red]No clip segments were created[/red]")
+                return None
+            
+            # Concatenate all segments
+            final_clip = self._concatenate_clips_with_transitions(clip_segments, style)
+            if not final_clip:
+                console.print("[red]Failed to concatenate clips[/red]")
+                return None
+            
+            # Add overall enhancements
+            enhanced_clip = self._add_visual_effects(final_clip, style)
+            if not enhanced_clip:
+                enhanced_clip = final_clip
+            
+            # Final processing
+            if enhanced_clip != output_path:
+                final_processed = self._final_processing(enhanced_clip, output_path, style)
+                if final_processed:
+                    console.print(f"[green]Single viral clip created: {output_path}[/green]")
+                    return output_path
+            
+            return enhanced_clip
+            
+        except Exception as e:
+            console.print(f"[red]Error creating single long clip: {e}[/red]")
+            return None
+    
+    def _select_moments_for_duration(self, viral_moments: List[ViralMoment], 
+                                   target_duration: float) -> List[ViralMoment]:
+        """Select and adjust viral moments to fit target duration."""
+        
+        # Sort by virality score (best first)
+        sorted_moments = sorted(viral_moments, key=lambda m: m.virality_score, reverse=True)
+        
+        selected_moments = []
+        total_duration = 0.0
+        
+        for moment in sorted_moments:
+            moment_duration = moment.duration
+            
+            # If this moment would exceed target, adjust it
+            if total_duration + moment_duration > target_duration:
+                remaining_time = target_duration - total_duration
+                if remaining_time >= 10.0:  # Minimum segment length
+                    # Adjust moment duration
+                    adjusted_moment = ViralMoment(
+                        start_time=moment.start_time,
+                        end_time=moment.start_time + remaining_time,
+                        virality_score=moment.virality_score,
+                        transcript_segments=moment.transcript_segments,
+                        visual_highlights=moment.visual_highlights,
+                        audio_features=moment.audio_features,
+                        confidence=moment.confidence,
+                        tags=moment.tags
+                    )
+                    selected_moments.append(adjusted_moment)
+                    total_duration = target_duration
+                break
+            
+            selected_moments.append(moment)
+            total_duration += moment_duration
+            
+            # Stop if we've reached target duration
+            if total_duration >= target_duration:
+                break
+        
+        console.print(f"[blue]Selected {len(selected_moments)} moments for {total_duration:.1f}s total duration[/blue]")
+        return selected_moments
+    
+    def _concatenate_clips_with_transitions(self, clip_paths: List[Path], 
+                                          style: ClipStyle) -> Optional[Path]:
+        """Concatenate clips with smooth transitions."""
+        
+        if len(clip_paths) == 1:
+            return clip_paths[0]
+        
+        output_path = self.temp_dir / "concatenated_viral_clip.mp4"
+        
+        # Create input file list
+        input_list = self.temp_dir / "clip_list.txt"
+        
+        try:
+            with open(input_list, 'w') as f:
+                for clip_path in clip_paths:
+                    f.write(f"file '{clip_path.absolute()}'\n")
+            
+            # Concatenate with crossfade transitions
+            if len(clip_paths) == 2:
+                # Simple crossfade for 2 clips
+                cmd = [
+                    'ffmpeg', 
+                    '-i', str(clip_paths[0]),
+                    '-i', str(clip_paths[1]),
+                    '-filter_complex', '[0][1]xfade=transition=fade:duration=1:offset=0',
+                    '-y', str(output_path)
+                ]
+            else:
+                # For multiple clips, use concat with fade transitions
+                cmd = [
+                    'ffmpeg', '-f', 'concat', '-safe', '0',
+                    '-i', str(input_list),
+                    '-vf', 'fade=t=in:st=0:d=0.5,fade=t=out:d=0.5',
+                    '-c:a', 'aac',
+                    '-y', str(output_path)
+                ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            console.print(f"[green]Clips concatenated with transitions[/green]")
+            return output_path
+            
+        except subprocess.CalledProcessError as e:
+            console.print(f"[yellow]Transition concatenation failed, using simple concat: {e}[/yellow]")
+            # Fallback to simple concatenation
+            return self._simple_concatenate(clip_paths)
+    
+    def _simple_concatenate(self, clip_paths: List[Path]) -> Optional[Path]:
+        """Simple concatenation without transitions as fallback."""
+        
+        output_path = self.temp_dir / "simple_concatenated.mp4"
+        input_list = self.temp_dir / "simple_clip_list.txt"
+        
+        try:
+            with open(input_list, 'w') as f:
+                for clip_path in clip_paths:
+                    f.write(f"file '{clip_path.absolute()}'\n")
+            
+            cmd = [
+                'ffmpeg', '-f', 'concat', '-safe', '0',
+                '-i', str(input_list),
+                '-c', 'copy',
+                '-y', str(output_path)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return output_path
+            
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]Simple concatenation failed: {e}[/red]")
+            return None
+
     def create_compilation(self, clip_paths: List[Path], 
                           output_path: Optional[Path] = None) -> Optional[Path]:
         """Create a compilation video from multiple clips."""
@@ -460,29 +635,7 @@ class ClipAssembler:
         if not output_path:
             output_path = self.output_dir / "viral_compilation.mp4"
         
-        # Create input file list
-        input_list = self.temp_dir / "clip_list.txt"
-        
-        try:
-            with open(input_list, 'w') as f:
-                for clip_path in clip_paths:
-                    f.write(f"file '{clip_path.absolute()}'\n")
-            
-            # Concatenate clips
-            cmd = [
-                'ffmpeg', '-f', 'concat', '-safe', '0',
-                '-i', str(input_list),
-                '-c', 'copy',
-                '-y', str(output_path)
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            console.print(f"[green]Compilation created: {output_path}[/green]")
-            return output_path
-            
-        except subprocess.CalledProcessError as e:
-            console.print(f"[red]Compilation creation failed: {e}[/red]")
-            return None
+        return self._simple_concatenate(clip_paths)
     
     def cleanup_temp_files(self):
         """Clean up temporary files created during processing."""

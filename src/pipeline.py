@@ -118,10 +118,10 @@ class ViralClipPipeline:
                 
                 progress.update(overall_task, completed=75)
                 
-                # Step 6: Generate Clips (100%)
-                progress.update(current_task, description="[green]Creating viral clips...", completed=0)
-                clips, thumbnails = self._generate_clips(
-                    video_path, viral_moments[:max_clips], clip_style,
+                # Step 6: Generate Single Long Clip (100%)
+                progress.update(current_task, description="[green]Creating viral highlight clip...", completed=0)
+                clips, thumbnails = self._generate_single_long_clip(
+                    video_path, viral_moments, clip_style,
                     progress, current_task
                 )
                 
@@ -303,10 +303,55 @@ class ViralClipPipeline:
             console.print(f"[yellow]⚠️  Viral moment detection failed: {e}[/yellow]")
             return []
     
+    def _generate_single_long_clip(self, video_path: Path, viral_moments: List[ViralMoment],
+                                  clip_style: Optional[ClipStyle],
+                                  progress: Progress, task: TaskID) -> tuple[List[Path], List[Path]]:
+        """Generate a single long clip from viral moments."""
+        
+        if not viral_moments:
+            console.print("[yellow]⚠️  No viral moments to generate clip from[/yellow]")
+            return [], []
+        
+        clips = []
+        thumbnails = []
+        
+        try:
+            progress.update(task, description="[green]Creating single viral highlight...", completed=20)
+            
+            # Create single long clip using target duration from config
+            target_duration = config.TARGET_CLIP_DURATION
+            clip_path = self.clip_assembler.create_single_long_clip(
+                video_path, viral_moments, target_duration, clip_style
+            )
+            
+            progress.update(task, completed=80)
+            
+            if clip_path:
+                clips.append(clip_path)
+                
+                # Create thumbnail from the best moment
+                best_moment = max(viral_moments, key=lambda m: m.virality_score)
+                thumbnail_path = self.clip_assembler.create_thumbnail(
+                    video_path, best_moment
+                )
+                
+                if thumbnail_path:
+                    thumbnails.append(thumbnail_path)
+                
+                progress.update(task, completed=100)
+                console.print(f"[blue]🎬 Generated single {target_duration}s viral highlight clip[/blue]")
+            else:
+                console.print("[yellow]⚠️  Failed to create viral highlight clip[/yellow]")
+                
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Failed to create viral highlight: {e}[/yellow]")
+        
+        return clips, thumbnails
+
     def _generate_clips(self, video_path: Path, viral_moments: List[ViralMoment],
                        clip_style: Optional[ClipStyle],
                        progress: Progress, task: TaskID) -> tuple[List[Path], List[Path]]:
-        """Generate viral clips from viral moments."""
+        """Generate viral clips from viral moments (legacy method)."""
         
         if not viral_moments:
             console.print("[yellow]⚠️  No viral moments to generate clips from[/yellow]")

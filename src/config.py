@@ -29,9 +29,9 @@ if PYDANTIC_AVAILABLE:
         MAX_VIDEO_DURATION: int = 3600  # 1 hour max
         
         # Clip generation
-        MIN_CLIP_DURATION: int = 15  # seconds
-        MAX_CLIP_DURATION: int = 60  # seconds
-        TARGET_CLIP_DURATION: int = 30  # seconds
+        MIN_CLIP_DURATION: int = 60  # seconds  
+        MAX_CLIP_DURATION: int = 120  # seconds
+        TARGET_CLIP_DURATION: int = 90  # seconds
         
         # Model configurations
         WHISPER_MODEL: str = "base"
@@ -86,9 +86,9 @@ else:
             self.MAX_VIDEO_DURATION = 3600
             
             # Clip generation
-            self.MIN_CLIP_DURATION = 15
-            self.MAX_CLIP_DURATION = 60
-            self.TARGET_CLIP_DURATION = 30
+            self.MIN_CLIP_DURATION = 60
+            self.MAX_CLIP_DURATION = 120
+            self.TARGET_CLIP_DURATION = 90
             
             # Model configurations
             self.WHISPER_MODEL = "base"
