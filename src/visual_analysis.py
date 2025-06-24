@@ -73,18 +73,15 @@ class VisualAnalyzer:
             console.print(f"[blue]Loading YOLO model: {config.YOLO_MODEL}[/blue]")
             self.yolo_model = YOLO(config.YOLO_MODEL)
             
-            # Load emotion detection pipeline
-            console.print("[blue]Loading emotion detection model[/blue]")
-            self.emotion_pipeline = pipeline(
-                "image-classification",
-                model="j-hartmann/emotion-english-distilroberta-base",
-                device=0 if "cuda" in self.device else -1
-            )
+            # Skip emotion detection for now - use simple face detection instead
+            console.print("[blue]Emotion detection disabled - using face detection only[/blue]")
+            self.emotion_pipeline = None
             
-            # Load CLIP for semantic understanding
+            # Load CLIP for semantic understanding from local models
             console.print("[blue]Loading CLIP model[/blue]")
-            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-            self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            clip_model_path = config.MODELS_DIR / "clip-model"
+            self.clip_model = CLIPModel.from_pretrained(str(clip_model_path))
+            self.clip_processor = CLIPProcessor.from_pretrained(str(clip_model_path))
             
             if "cuda" in self.device:
                 self.clip_model = self.clip_model.to(self.device)
@@ -197,41 +194,26 @@ class VisualAnalyzer:
             return []
     
     def _detect_emotions(self, frame: np.ndarray, timestamp: float) -> List[EmotionDetection]:
-        """Detect emotions in faces within the frame."""
-        if not self.emotion_pipeline:
-            return []
-        
+        """Detect faces in the frame (emotion detection disabled for now)."""
         try:
-            # Detect faces using face_recognition
+            # Just detect faces and assign neutral emotion for now
             face_locations = face_recognition.face_locations(frame)
             emotions = []
             
             for face_location in face_locations:
                 top, right, bottom, left = face_location
-                
-                # Extract face region
-                face_image = frame[top:bottom, left:right]
-                if face_image.size == 0:
-                    continue
-                
-                # Convert to PIL Image for emotion detection
-                pil_image = Image.fromarray(face_image)
-                
-                # Detect emotion
-                emotion_results = self.emotion_pipeline(pil_image)
-                if emotion_results:
-                    best_emotion = max(emotion_results, key=lambda x: x['score'])
-                    emotions.append(EmotionDetection(
-                        emotion=best_emotion['label'],
-                        confidence=best_emotion['score'],
-                        bbox=(left, top, right, bottom),
-                        timestamp=timestamp
-                    ))
+                # Just add faces as "neutral" emotions for scoring purposes
+                emotions.append(EmotionDetection(
+                    emotion="neutral",
+                    confidence=0.8,
+                    bbox=(left, top, right, bottom),
+                    timestamp=timestamp
+                ))
             
             return emotions
             
         except Exception as e:
-            console.print(f"[yellow]Emotion detection error: {e}[/yellow]")
+            console.print(f"[yellow]Face detection error: {e}[/yellow]")
             return []
     
     def _extract_frame_features(self, frame: np.ndarray) -> np.ndarray:

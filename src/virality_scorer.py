@@ -75,28 +75,31 @@ class ViralityScorer:
             else:
                 quantization_config = None
             
-            # Load sentiment analysis pipeline
+            # Load sentiment analysis pipeline from local models
+            sentiment_model_path = config.MODELS_DIR / "sentiment-model"
             self.sentiment_pipeline = pipeline(
                 "sentiment-analysis",
-                model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+                model=str(sentiment_model_path),
                 device=0 if "cuda" in self.device else -1
             )
             
-            # Load sentence transformer for semantic similarity
+            # Load sentence transformer for semantic similarity from local models
             console.print("[blue]Loading sentence transformer[/blue]")
+            sentence_transformer_path = config.MODELS_DIR / "sentence-transformer"
             self.sentence_transformer = SentenceTransformer(
-                'all-MiniLM-L6-v2',
+                str(sentence_transformer_path),
                 device=self.device
             )
             
-            # Load main LLM for text generation
+            # Load main LLM for text generation from local models
             console.print(f"[blue]Loading main LLM: {self.model_name}[/blue]")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            dialogpt_model_path = config.MODELS_DIR / "dialogpt-model"
+            self.tokenizer = AutoTokenizer.from_pretrained(str(dialogpt_model_path))
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             
             self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
+                str(dialogpt_model_path),
                 quantization_config=quantization_config,
                 device_map="auto" if "cuda" in self.device else None,
                 torch_dtype=torch.float16 if "cuda" in self.device else torch.float32,

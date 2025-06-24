@@ -1,6 +1,8 @@
 """Speech-to-text processing using OpenAI Whisper with ROCm support."""
 
 import os
+import gc
+import psutil
 import torch
 import whisper
 import librosa
@@ -48,16 +50,49 @@ class SpeechToText:
             return "cpu"
     
     def _load_model(self):
-        """Load the Whisper model."""
+        """Load the Whisper model from local directory if available."""
         try:
             console.print(f"[blue]Loading Whisper model: {self.model_name} on {self.device}[/blue]")
-            self.model = whisper.load_model(self.model_name, device=self.device)
+            
+            # Try to load from local models directory first
+            local_whisper_path = config.MODELS_DIR / "whisper" / f"{self.model_name}.pt"
+            if local_whisper_path.exists():
+                console.print(f"[cyan]Loading from local model: {local_whisper_path}[/cyan]")
+                self.model = whisper.load_model(str(local_whisper_path), device=self.device)
+            else:
+                # Fallback to downloading model
+                console.print("[yellow]Local model not found, downloading...[/yellow]")
+                self.model = whisper.load_model(self.model_name, device=self.device)
+            
             console.print("[green]Whisper model loaded successfully[/green]")
         except Exception as e:
             console.print(f"[red]Error loading Whisper model: {e}[/red]")
             console.print("[yellow]Falling back to CPU[/yellow]")
             self.device = "cpu"
-            self.model = whisper.load_model(self.model_name, device=self.device)
+            try:
+                if local_whisper_path.exists():
+                    self.model = whisper.load_model(str(local_whisper_path), device=self.device)
+                else:
+                    self.model = whisper.load_model(self.model_name, device=self.device)
+            except Exception as e2:
+                console.print(f"[red]Failed to load Whisper model on CPU: {e2}[/red]")
+                raise
+    
+    def _check_memory_usage(self) -> bool:
+        """Check if enough memory is available for transcription."""
+        memory = psutil.virtual_memory()
+        available_gb = memory.available / (1024**3)
+        
+        # Whisper base model needs ~1GB, medium ~5GB, large ~10GB
+        model_memory_req = {"tiny": 0.4, "base": 1.0, "small": 2.0, "medium": 5.0, "large": 10.0, "large-v2": 10.0, "large-v3": 10.0}
+        required_gb = model_memory_req.get(self.model_name, 1.0)
+        
+        if available_gb < required_gb:
+            console.print(f"[red]Insufficient memory: {available_gb:.1f}GB available, {required_gb}GB required[/red]")
+            return False
+        
+        console.print(f"[green]Memory check passed: {available_gb:.1f}GB available[/green]")
+        return True
     
     def transcribe_audio(self, audio_path: Path, language: str = None) -> List[TranscriptSegment]:
         """Transcribe audio file and return segments with timestamps."""
@@ -65,17 +100,29 @@ class SpeechToText:
             console.print("[red]Model not loaded[/red]")
             return []
         
+        # Check memory before processing
+        if not self._check_memory_usage():
+            console.print("[yellow]Forcing garbage collection and retrying...[/yellow]")
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            if not self._check_memory_usage():
+                console.print("[red]Still insufficient memory after cleanup[/red]")
+                return []
+        
         try:
             console.print(f"[blue]Transcribing audio: {audio_path}[/blue]")
             
-            # Transcribe with word-level timestamps
+            # Transcribe with word-level timestamps and memory optimization
             result = self.model.transcribe(
                 str(audio_path),
                 language=language,
                 task="transcribe",
                 verbose=False,
                 word_timestamps=True,
-                temperature=0.0
+                temperature=0.0,
+                fp16=False  # Disable FP16 to reduce memory usage
             )
             
             segments = []
@@ -88,10 +135,20 @@ class SpeechToText:
                 ))
             
             console.print(f"[green]Transcription completed: {len(segments)} segments[/green]")
+            
+            # Clean up memory after transcription
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             return segments
             
         except Exception as e:
             console.print(f"[red]Transcription error: {e}[/red]")
+            # Clean up memory on error
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             return []
     
     def transcribe_with_word_timestamps(self, audio_path: Path, language: str = None) -> Dict[str, Any]:
@@ -107,7 +164,8 @@ class SpeechToText:
                 task="transcribe",
                 verbose=False,
                 word_timestamps=True,
-                temperature=0.0
+                temperature=0.0,
+                fp16=False  # Disable FP16 to reduce memory usage
             )
             
             return {

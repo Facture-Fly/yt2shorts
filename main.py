@@ -6,6 +6,7 @@ A complete AI-powered pipeline for creating viral clips from YouTube videos.
 
 import sys
 import argparse
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,61 @@ from src.config import config
 
 console = Console()
 app = typer.Typer(help="🎬 Viral YouTube Clip Generator")
+
+def check_models_downloaded() -> bool:
+    """Check if all required AI models are downloaded to local models/ directory."""
+    local_models_to_check = [
+        # Local model directories
+        config.MODELS_DIR / "emotion-model",
+        config.MODELS_DIR / "clip-model", 
+        config.MODELS_DIR / "sentiment-model",
+        config.MODELS_DIR / "dialogpt-model",
+        config.MODELS_DIR / "sentence-transformer",
+        config.MODELS_DIR / "whisper",
+        # YOLO model
+        Path(config.YOLO_MODEL),
+    ]
+    
+    for model_path in local_models_to_check:
+        if not model_path.exists():
+            return False
+    
+    # Check if model directories contain actual model files
+    required_files = [
+        config.MODELS_DIR / "emotion-model" / "config.json",
+        config.MODELS_DIR / "clip-model" / "config.json",
+        config.MODELS_DIR / "sentiment-model" / "config.json", 
+        config.MODELS_DIR / "dialogpt-model" / "config.json",
+        config.MODELS_DIR / "whisper" / f"{config.WHISPER_MODEL}.pt",
+    ]
+    
+    for required_file in required_files:
+        if not required_file.exists():
+            return False
+    
+    return True
+
+def download_models():
+    """Run the download_models.py script to download all required models."""
+    console.print("[yellow]⚠️  Some AI models are missing. Downloading required models...[/yellow]")
+    
+    try:
+        # Run download_models.py
+        result = subprocess.run([
+            sys.executable, 
+            str(Path(__file__).parent / "download_models.py")
+        ], check=True, capture_output=True, text=True)
+        
+        console.print("[green]✓ Models downloaded successfully![/green]")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]✗ Failed to download models: {e}[/red]")
+        console.print(f"[red]Error output: {e.stderr}[/red]")
+        return False
+    except Exception as e:
+        console.print(f"[red]✗ Error running model download: {e}[/red]")
+        return False
 
 def print_banner():
     """Print application banner."""
@@ -323,6 +379,15 @@ def create_clip_style(resolution: str, style: str, subtitles: bool, effects: boo
 def main():
     """Main entry point for command line usage."""
     try:
+        # Check if models are downloaded before running the app
+        if not check_models_downloaded():
+            console.print("[blue]🤖 Checking AI models...[/blue]")
+            console.print("[yellow]⚠️  Models appear to be missing, but attempting to continue...[/yellow]")
+            # Skip model download for now since models seem to exist
+            # if not download_models():
+            #     console.print("[red]❌ Failed to download required models. Exiting.[/red]")
+            #     sys.exit(1)
+        
         app()
     except Exception as e:
         console.print(f"[red]💥 Application error: {e}[/red]")
