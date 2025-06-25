@@ -35,9 +35,9 @@ if PYDANTIC_AVAILABLE:
         
         # TikTok-style viral editing
         VIRAL_SEGMENT_MIN_DURATION: float = 2.0  # seconds
-        VIRAL_SEGMENT_MAX_DURATION: float = 8.0  # seconds
-        VIRAL_SEGMENT_TARGET_DURATION: float = 4.0  # seconds
-        MAX_VIRAL_SEGMENTS: int = 20  # Maximum segments per clip
+        VIRAL_SEGMENT_MAX_DURATION: float = 10.0  # seconds
+        VIRAL_SEGMENT_TARGET_DURATION: float = 5.0  # seconds
+        MAX_VIRAL_SEGMENTS: int = 15  # Maximum segments per clip
         TRANSITION_DURATION: float = 0.3  # seconds
         
         # Model configurations
@@ -99,9 +99,9 @@ else:
             
             # TikTok-style viral editing
             self.VIRAL_SEGMENT_MIN_DURATION = 2.0
-            self.VIRAL_SEGMENT_MAX_DURATION = 8.0
-            self.VIRAL_SEGMENT_TARGET_DURATION = 4.0
-            self.MAX_VIRAL_SEGMENTS = 20
+            self.VIRAL_SEGMENT_MAX_DURATION = 10.0
+            self.VIRAL_SEGMENT_TARGET_DURATION = 5.0
+            self.MAX_VIRAL_SEGMENTS = 15
             self.TRANSITION_DURATION = 0.3
             
             # Model configurations
