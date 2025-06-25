@@ -17,9 +17,19 @@ from rich.progress import Progress, track
 
 from .config import config
 from .speech_to_text import TranscriptSegment
-from .visual_analysis import DetectedObject, EmotionDetection, ActionDetection
+from .visual_analysis import DetectedObject, EmotionDetection, ActionDetection, SceneClassification
 
 console = Console()
+
+@dataclass
+class EmotionArc:
+    """Represents an emotional narrative arc."""
+    start_time: float
+    end_time: float
+    arc_type: str  # tension_buildup, peak_moment, resolution, etc.
+    emotion_trajectory: List[Tuple[float, str, float]]  # (timestamp, emotion, intensity)
+    narrative_strength: float
+    speaker_changes: int
 
 @dataclass
 class ViralMoment:
@@ -33,6 +43,7 @@ class ViralMoment:
     visual_features: Dict[str, Any]
     audio_features: Dict[str, Any]
     confidence: float
+    emotion_arc: Optional[EmotionArc] = None
 
 class ViralityScorer:
     """Score video segments for viral potential using local LLM."""
@@ -111,6 +122,418 @@ class ViralityScorer:
         except Exception as e:
             console.print(f"[red]Error loading virality models: {e}[/red]")
             console.print("[yellow]Falling back to simplified scoring[/yellow]")
+    
+    def analyze_emotion_progression(self, transcript_segments: List[TranscriptSegment],
+                                  emotions: List[EmotionDetection],
+                                  scene_classifications: List[SceneClassification] = None) -> List[EmotionArc]:
+        """Analyze emotional progression to identify narrative arcs."""
+        if not transcript_segments and not emotions:
+            return []
+        
+        # Combine text and visual emotions into timeline
+        emotion_timeline = []
+        
+        # Add text-based emotions
+        for segment in transcript_segments:
+            text_emotion = self._extract_text_emotion(segment)
+            if text_emotion:
+                emotion_timeline.append({
+                    'timestamp': (segment.start + segment.end) / 2,
+                    'emotion': text_emotion['emotion'],
+                    'intensity': text_emotion['intensity'],
+                    'source': 'text',
+                    'speaker': segment.speaker
+                })
+        
+        # Add visual emotions
+        for emotion in emotions:
+            emotion_timeline.append({
+                'timestamp': emotion.timestamp,
+                'emotion': emotion.emotion,
+                'intensity': emotion.confidence,
+                'source': 'visual',
+                'speaker': None
+            })
+        
+        # Sort by timestamp
+        emotion_timeline.sort(key=lambda x: x['timestamp'])
+        
+        if not emotion_timeline:
+            return []
+        
+        # Identify emotion arcs
+        arcs = self._identify_emotion_arcs(emotion_timeline)
+        
+        # Enhance arcs with scene context
+        if scene_classifications:
+            arcs = self._enhance_arcs_with_scene_context(arcs, scene_classifications)
+        
+        return arcs
+    
+    def _extract_text_emotion(self, segment: TranscriptSegment) -> Optional[Dict[str, Any]]:
+        """Extract emotion from text segment."""
+        text = segment.text.lower()
+        
+        # Enhanced emotion mapping
+        emotion_patterns = {
+            'excitement': {
+                'keywords': ['amazing', 'incredible', 'wow', 'awesome', 'fantastic', 'unbelievable'],
+                'intensity_multiplier': 1.2
+            },
+            'surprise': {
+                'keywords': ['whoa', 'what', 'no way', 'seriously', 'really', 'oh my god'],
+                'intensity_multiplier': 1.1
+            },
+            'joy': {
+                'keywords': ['happy', 'love', 'great', 'wonderful', 'perfect', 'haha'],
+                'intensity_multiplier': 1.0
+            },
+            'tension': {
+                'keywords': ['but', 'however', 'wait', 'problem', 'issue', 'difficult'],
+                'intensity_multiplier': 0.9
+            },
+            'anticipation': {
+                'keywords': ['going to', 'will', 'about to', 'ready', 'prepare', 'next'],
+                'intensity_multiplier': 0.8
+            },
+            'resolution': {
+                'keywords': ['finally', 'solved', 'done', 'finished', 'complete', 'success'],
+                'intensity_multiplier': 1.0
+            }
+        }
+        
+        best_emotion = None
+        best_score = 0
+        
+        for emotion, config in emotion_patterns.items():
+            score = 0
+            for keyword in config['keywords']:
+                if keyword in text:
+                    score += config['intensity_multiplier']
+            
+            # Boost for emphasis markers
+            if '!' in segment.text:
+                score *= 1.2
+            if '?' in segment.text and emotion in ['surprise', 'anticipation']:
+                score *= 1.1
+            
+            if score > best_score:
+                best_score = score
+                best_emotion = emotion
+        
+        if best_emotion and best_score > 0.5:
+            return {
+                'emotion': best_emotion,
+                'intensity': min(best_score, 1.0)
+            }
+        
+        return None
+    
+    def _identify_emotion_arcs(self, emotion_timeline: List[Dict]) -> List[EmotionArc]:
+        """Identify narrative emotion arcs from timeline."""
+        if len(emotion_timeline) < 3:
+            return []
+        
+        arcs = []
+        window_size = 5  # seconds
+        min_arc_duration = 10  # seconds
+        
+        i = 0
+        while i < len(emotion_timeline) - 2:
+            arc_start = emotion_timeline[i]['timestamp']
+            arc_emotions = [emotion_timeline[i]]
+            
+            # Collect emotions within time window
+            j = i + 1
+            while (j < len(emotion_timeline) and 
+                   emotion_timeline[j]['timestamp'] - arc_start < window_size * 3):
+                arc_emotions.append(emotion_timeline[j])
+                j += 1
+            
+            if len(arc_emotions) < 3:
+                i += 1
+                continue
+            
+            arc_end = arc_emotions[-1]['timestamp']
+            if arc_end - arc_start < min_arc_duration:
+                i += 1
+                continue
+            
+            # Analyze arc pattern
+            arc_type, strength = self._classify_emotion_arc(arc_emotions)
+            
+            if strength > 0.3:  # Minimum strength threshold
+                # Count speaker changes
+                speakers = set(e.get('speaker') for e in arc_emotions if e.get('speaker'))
+                speaker_changes = len(speakers) - 1 if len(speakers) > 1 else 0
+                
+                # Create emotion trajectory
+                trajectory = [(e['timestamp'], e['emotion'], e['intensity']) for e in arc_emotions]
+                
+                arc = EmotionArc(
+                    start_time=arc_start,
+                    end_time=arc_end,
+                    arc_type=arc_type,
+                    emotion_trajectory=trajectory,
+                    narrative_strength=strength,
+                    speaker_changes=speaker_changes
+                )
+                arcs.append(arc)
+            
+            # Move forward, but allow overlap
+            i += max(1, len(arc_emotions) // 2)
+        
+        return arcs
+    
+    def _classify_emotion_arc(self, arc_emotions: List[Dict]) -> Tuple[str, float]:
+        """Classify the type and strength of an emotion arc."""
+        if len(arc_emotions) < 3:
+            return "minimal", 0.1
+        
+        # Extract emotion sequence
+        emotions = [e['emotion'] for e in arc_emotions]
+        intensities = [e['intensity'] for e in arc_emotions]
+        
+        # Define arc patterns
+        tension_buildup_patterns = [
+            ['anticipation', 'tension', 'excitement'],
+            ['joy', 'tension', 'surprise'],
+            ['tension', 'tension', 'excitement']
+        ]
+        
+        peak_resolution_patterns = [
+            ['excitement', 'surprise', 'joy'],
+            ['tension', 'excitement', 'resolution'],
+            ['surprise', 'excitement', 'resolution']
+        ]
+        
+        # Check for tension-buildup arc
+        if self._matches_pattern_sequence(emotions, tension_buildup_patterns):
+            strength = np.mean(intensities) * 1.2  # Bonus for buildup
+            return "tension_buildup", min(strength, 1.0)
+        
+        # Check for peak-resolution arc
+        if self._matches_pattern_sequence(emotions, peak_resolution_patterns):
+            strength = np.mean(intensities) * 1.1
+            return "peak_resolution", min(strength, 1.0)
+        
+        # Check for sustained excitement
+        if emotions.count('excitement') >= len(emotions) * 0.6:
+            strength = np.mean(intensities)
+            return "sustained_excitement", min(strength, 1.0)
+        
+        # Check for dramatic contrast
+        intensity_range = max(intensities) - min(intensities)
+        if intensity_range > 0.5:
+            strength = intensity_range
+            return "dramatic_contrast", min(strength, 1.0)
+        
+        # Default to general arc
+        strength = np.mean(intensities) * 0.8
+        return "general_progression", min(strength, 1.0)
+    
+    def _matches_pattern_sequence(self, emotions: List[str], patterns: List[List[str]]) -> bool:
+        """Check if emotion sequence matches any of the given patterns."""
+        for pattern in patterns:
+            if len(emotions) >= len(pattern):
+                # Check for pattern match with some flexibility
+                matches = 0
+                for i, pattern_emotion in enumerate(pattern):
+                    if i < len(emotions) and emotions[i] == pattern_emotion:
+                        matches += 1
+                    elif i < len(emotions) and pattern_emotion in emotions[max(0, i-1):i+2]:
+                        matches += 0.5  # Partial match for nearby emotions
+                
+                if matches >= len(pattern) * 0.7:  # 70% match threshold
+                    return True
+        return False
+    
+    def _enhance_arcs_with_scene_context(self, arcs: List[EmotionArc], 
+                                       scene_classifications: List[SceneClassification]) -> List[EmotionArc]:
+        """Enhance emotion arcs with scene context information."""
+        enhanced_arcs = []
+        
+        for arc in arcs:
+            # Find relevant scenes for this arc
+            relevant_scenes = []
+            for scene in scene_classifications:
+                if arc.start_time <= scene.timestamp <= arc.end_time:
+                    relevant_scenes.append(scene)
+            
+            # Adjust narrative strength based on scene context
+            strength_modifier = 1.0
+            
+            if relevant_scenes:
+                # Social scenes enhance emotion arcs
+                social_scenes = [s for s in relevant_scenes if s.scene_type == 'social']
+                if social_scenes:
+                    strength_modifier *= 1.2
+                
+                # Action/sports scenes enhance excitement arcs
+                action_scenes = [s for s in relevant_scenes if s.scene_type in ['sports', 'action']]
+                if action_scenes and arc.arc_type in ['excitement', 'sustained_excitement']:
+                    strength_modifier *= 1.15
+                
+                # Presentation scenes enhance tension-buildup arcs
+                presentation_scenes = [s for s in relevant_scenes if s.scene_type == 'presentation']
+                if presentation_scenes and arc.arc_type == 'tension_buildup':
+                    strength_modifier *= 1.1
+            
+            # Create enhanced arc
+            enhanced_arc = EmotionArc(
+                start_time=arc.start_time,
+                end_time=arc.end_time,
+                arc_type=arc.arc_type,
+                emotion_trajectory=arc.emotion_trajectory,
+                narrative_strength=min(arc.narrative_strength * strength_modifier, 1.0),
+                speaker_changes=arc.speaker_changes
+            )
+            enhanced_arcs.append(enhanced_arc)
+        
+        return enhanced_arcs
+    
+    def get_content_aware_weights(self, transcript_segments: List[TranscriptSegment],
+                                scene_classifications: List[SceneClassification],
+                                emotions: List[EmotionDetection],
+                                actions: List[ActionDetection]) -> Dict[str, float]:
+        """Calculate dynamic scoring weights based on content type and context."""
+        # Default weights from config
+        weights = {
+            'emotion': config.EMOTION_WEIGHT,
+            'visual': config.VISUAL_WEIGHT,
+            'audio': config.AUDIO_WEIGHT,
+            'action': config.ACTION_WEIGHT
+        }
+        
+        # Analyze content characteristics
+        content_type = self._determine_primary_content_type(
+            transcript_segments, scene_classifications, emotions, actions
+        )
+        
+        # Adjust weights based on content type
+        if content_type == 'educational':
+            # Educational content: emphasize clear speech and visual aids
+            weights['audio'] *= 1.3
+            weights['visual'] *= 1.1
+            weights['emotion'] *= 0.9
+            weights['action'] *= 0.8
+            
+        elif content_type == 'entertainment':
+            # Entertainment: emphasize emotions and actions
+            weights['emotion'] *= 1.4
+            weights['action'] *= 1.3
+            weights['visual'] *= 1.1
+            weights['audio'] *= 0.9
+            
+        elif content_type == 'conversation':
+            # Conversations: emphasize speaker dynamics and emotions
+            weights['audio'] *= 1.4
+            weights['emotion'] *= 1.2
+            weights['visual'] *= 0.8
+            weights['action'] *= 0.8
+            
+        elif content_type == 'action_sports':
+            # Action/Sports: emphasize visual and action elements
+            weights['action'] *= 1.5
+            weights['visual'] *= 1.3
+            weights['emotion'] *= 1.1
+            weights['audio'] *= 0.7
+            
+        elif content_type == 'cooking_tutorial':
+            # Cooking: balance visual demonstration with clear instruction
+            weights['visual'] *= 1.3
+            weights['action'] *= 1.2
+            weights['audio'] *= 1.1
+            weights['emotion'] *= 0.9
+            
+        elif content_type == 'technology':
+            # Tech content: emphasize clear explanation and visual demonstration
+            weights['audio'] *= 1.2
+            weights['visual'] *= 1.2
+            weights['action'] *= 1.0
+            weights['emotion'] *= 0.9
+            
+        # Normalize weights to sum to 1.0
+        total_weight = sum(weights.values())
+        weights = {k: v / total_weight for k, v in weights.items()}
+        
+        return weights
+    
+    def _determine_primary_content_type(self, transcript_segments: List[TranscriptSegment],
+                                      scene_classifications: List[SceneClassification],
+                                      emotions: List[EmotionDetection],
+                                      actions: List[ActionDetection]) -> str:
+        """Determine the primary content type based on analysis."""
+        type_scores = {}
+        
+        # Analyze transcript for content indicators
+        all_text = " ".join(seg.text for seg in transcript_segments).lower()
+        
+        # Educational indicators
+        educational_keywords = [
+            'learn', 'teach', 'explain', 'understand', 'tutorial', 'how to',
+            'guide', 'step', 'method', 'technique', 'lesson', 'course'
+        ]
+        educational_score = sum(all_text.count(kw) for kw in educational_keywords) / max(len(all_text.split()), 1)
+        type_scores['educational'] = educational_score
+        
+        # Entertainment indicators
+        entertainment_keywords = [
+            'funny', 'hilarious', 'comedy', 'joke', 'laugh', 'fun', 'entertaining',
+            'awesome', 'amazing', 'incredible', 'wow', 'crazy'
+        ]
+        entertainment_score = sum(all_text.count(kw) for kw in entertainment_keywords) / max(len(all_text.split()), 1)
+        type_scores['entertainment'] = entertainment_score
+        
+        # Conversation indicators
+        conversation_indicators = 0
+        if transcript_segments:
+            # Multiple speakers
+            speakers = set(seg.speaker for seg in transcript_segments if seg.speaker)
+            if len(speakers) > 1:
+                conversation_indicators += len(speakers) * 0.1
+            
+            # Question/answer patterns
+            questions = sum('?' in seg.text for seg in transcript_segments)
+            conversation_indicators += questions * 0.05
+            
+        type_scores['conversation'] = conversation_indicators
+        
+        # Analyze scene classifications
+        if scene_classifications:
+            scene_types = [sc.scene_type for sc in scene_classifications]
+            
+            # Sports/Action content
+            action_scenes = sum(1 for st in scene_types if st in ['sports', 'action'])
+            type_scores['action_sports'] = action_scenes / len(scene_types)
+            
+            # Cooking content
+            cooking_scenes = sum(1 for st in scene_types if st == 'cooking')
+            type_scores['cooking_tutorial'] = cooking_scenes / len(scene_types)
+            
+            # Technology content
+            tech_scenes = sum(1 for st in scene_types if st == 'technology')
+            type_scores['technology'] = tech_scenes / len(scene_types)
+        
+        # Analyze actions for content type
+        if actions:
+            action_types = [act.action for act in actions]
+            
+            # Sports actions boost action_sports score
+            sports_actions = sum(1 for at in action_types if 'running' in at or 'moving_fast' in at)
+            if 'action_sports' in type_scores:
+                type_scores['action_sports'] += sports_actions / len(action_types) * 0.5
+            else:
+                type_scores['action_sports'] = sports_actions / len(action_types) * 0.5
+        
+        # Return the content type with highest score
+        if type_scores:
+            best_type = max(type_scores.items(), key=lambda x: x[1])
+            if best_type[1] > 0.1:  # Minimum threshold
+                return best_type[0]
+        
+        # Default to entertainment if no clear type detected
+        return 'entertainment'
     
     def score_transcript_segment(self, segment: TranscriptSegment) -> Dict[str, Any]:
         """Score a single transcript segment for virality potential."""
@@ -381,6 +804,7 @@ class ViralityScorer:
                           emotions: List[EmotionDetection],
                           actions: List[ActionDetection],
                           silence_segments: List[Tuple[float, float]],
+                          scene_classifications: List[SceneClassification] = None,
                           min_duration: float = 15.0,
                           max_duration: float = 60.0) -> List[ViralMoment]:
         """Find the best viral moments in the video."""
@@ -390,6 +814,17 @@ class ViralityScorer:
             return []
         
         console.print("[blue]Analyzing video for viral moments[/blue]")
+        
+        # Get content-aware weights
+        adaptive_weights = self.get_content_aware_weights(
+            transcript_segments, scene_classifications or [], emotions, actions
+        )
+        console.print(f"[cyan]Using adaptive weights: {adaptive_weights}[/cyan]")
+        
+        # Analyze emotion progression for narrative arcs
+        emotion_arcs = self.analyze_emotion_progression(
+            transcript_segments, emotions, scene_classifications
+        )
         
         # Create time windows for analysis
         video_duration = max(seg.end for seg in transcript_segments)
@@ -428,13 +863,26 @@ class ViralityScorer:
             audio_analysis = self.score_audio_features(window_transcript, window_silence)
             audio_score = audio_analysis['score']
             
-            # Weighted combination
+            # Content-aware weighted combination
             total_score = (
-                transcript_score * config.EMOTION_WEIGHT +
-                visual_score * config.VISUAL_WEIGHT +
-                audio_score * config.AUDIO_WEIGHT +
-                (len(window_objects) > 0) * config.ACTION_WEIGHT * 0.5
+                transcript_score * adaptive_weights['emotion'] +
+                visual_score * adaptive_weights['visual'] +
+                audio_score * adaptive_weights['audio'] +
+                (len(window_objects) > 0) * adaptive_weights['action'] * 0.5
             )
+            
+            # Bonus for emotion arc alignment
+            emotion_arc_bonus = 0.0
+            for arc in emotion_arcs:
+                if arc.start_time <= (start_time + end_time) / 2 <= arc.end_time:
+                    # Bonus based on arc type and strength
+                    if arc.arc_type in ['tension_buildup', 'peak_resolution']:
+                        emotion_arc_bonus += arc.narrative_strength * 0.2
+                    elif arc.arc_type == 'dramatic_contrast':
+                        emotion_arc_bonus += arc.narrative_strength * 0.15
+                    break
+            
+            total_score += emotion_arc_bonus
             
             window_scores.append({
                 'start_time': start_time,
@@ -498,6 +946,14 @@ class ViralityScorer:
                     # Remove duplicates
                     unique_reasons = list(set(all_reasons))
                     
+                    # Find relevant emotion arc for this moment
+                    relevant_arc = None
+                    moment_mid = (moment_start + moment_end) / 2
+                    for arc in emotion_arcs:
+                        if arc.start_time <= moment_mid <= arc.end_time:
+                            relevant_arc = arc
+                            break
+                    
                     viral_moment = ViralMoment(
                         start_time=moment_start,
                         end_time=moment_end,
@@ -508,7 +964,8 @@ class ViralityScorer:
                                            for seg in mw['transcript_segments']],
                         visual_features=moment_windows[0]['visual_analysis']['features'],
                         audio_features=moment_windows[0]['audio_analysis']['features'],
-                        confidence=0.8
+                        confidence=0.8,
+                        emotion_arc=relevant_arc
                     )
                     
                     viral_moments.append(viral_moment)

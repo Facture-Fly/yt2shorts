@@ -15,6 +15,14 @@ from rich.progress import Progress, track
 
 from .config import config
 
+# Try to import pyannote for advanced speaker diarization
+try:
+    from pyannote.audio import Pipeline
+    from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+    PYANNOTE_AVAILABLE = True
+except ImportError:
+    PYANNOTE_AVAILABLE = False
+
 console = Console()
 
 @dataclass
@@ -33,6 +41,7 @@ class SpeechToText:
         self.model_name = model_name or config.WHISPER_MODEL
         self.device = device or self._get_best_device()
         self.model = None
+        self.diarization_pipeline = None
         
         # Set ROCm environment variables
         if "cuda" in self.device.lower():
@@ -40,6 +49,7 @@ class SpeechToText:
             os.environ["PYTORCH_HIP_ALLOC_CONF"] = config.PYTORCH_HIP_ALLOC_CONF
         
         self._load_model()
+        self._load_diarization_pipeline()
     
     def _get_best_device(self) -> str:
         """Determine the best available device."""
@@ -77,6 +87,25 @@ class SpeechToText:
             except Exception as e2:
                 console.print(f"[red]Failed to load Whisper model on CPU: {e2}[/red]")
                 raise
+    
+    def _load_diarization_pipeline(self):
+        """Load speaker diarization pipeline if available."""
+        if not PYANNOTE_AVAILABLE:
+            console.print("[yellow]pyannote.audio not available, using basic speaker detection[/yellow]")
+            return
+        
+        try:
+            console.print("[blue]Loading speaker diarization pipeline[/blue]")
+            # Load a pre-trained speaker diarization pipeline
+            self.diarization_pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1",
+                use_auth_token=False  # Set to True if you have HuggingFace auth
+            )
+            console.print("[green]Speaker diarization pipeline loaded[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Could not load diarization pipeline: {e}[/yellow]")
+            console.print("[yellow]Falling back to basic speaker detection[/yellow]")
+            self.diarization_pipeline = None
     
     def _check_memory_usage(self) -> bool:
         """Check if enough memory is available for transcription."""
@@ -233,11 +262,75 @@ class SpeechToText:
             console.print(f"[red]Silence detection error: {e}[/red]")
             return []
     
-    def detect_speaker_changes(self, segments: List[TranscriptSegment]) -> List[TranscriptSegment]:
-        """Detect potential speaker changes based on silence gaps and text patterns."""
+    def detect_speaker_changes(self, segments: List[TranscriptSegment], audio_path: Path = None) -> List[TranscriptSegment]:
+        """Detect speaker changes using advanced diarization if available."""
         if len(segments) < 2:
             return segments
         
+        # Try advanced diarization first
+        if self.diarization_pipeline and audio_path and audio_path.exists():
+            return self._advanced_speaker_diarization(segments, audio_path)
+        
+        # Fallback to basic speaker detection
+        return self._basic_speaker_detection(segments)
+    
+    def _advanced_speaker_diarization(self, segments: List[TranscriptSegment], audio_path: Path) -> List[TranscriptSegment]:
+        """Advanced speaker diarization using pyannote.audio."""
+        try:
+            console.print("[blue]Running advanced speaker diarization[/blue]")
+            
+            # Run diarization on the audio file
+            diarization = self.diarization_pipeline(str(audio_path))
+            
+            # Create speaker timeline
+            speaker_timeline = []
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                speaker_timeline.append({
+                    'start': turn.start,
+                    'end': turn.end,
+                    'speaker': speaker
+                })
+            
+            # Map transcript segments to speakers
+            enhanced_segments = []
+            for segment in segments:
+                segment_mid = (segment.start + segment.end) / 2
+                
+                # Find the speaker active at this segment's midpoint
+                assigned_speaker = "Unknown"
+                for speaker_turn in speaker_timeline:
+                    if speaker_turn['start'] <= segment_mid <= speaker_turn['end']:
+                        assigned_speaker = speaker_turn['speaker']
+                        break
+                
+                # If no exact match, find the closest speaker
+                if assigned_speaker == "Unknown":
+                    min_distance = float('inf')
+                    for speaker_turn in speaker_timeline:
+                        distance = min(
+                            abs(segment_mid - speaker_turn['start']),
+                            abs(segment_mid - speaker_turn['end'])
+                        )
+                        if distance < min_distance:
+                            min_distance = distance
+                            assigned_speaker = speaker_turn['speaker']
+                
+                segment.speaker = assigned_speaker
+                enhanced_segments.append(segment)
+            
+            # Count unique speakers
+            unique_speakers = set(seg.speaker for seg in enhanced_segments)
+            console.print(f"[green]Advanced diarization completed: {len(unique_speakers)} speakers detected[/green]")
+            
+            return enhanced_segments
+            
+        except Exception as e:
+            console.print(f"[yellow]Advanced diarization failed: {e}[/yellow]")
+            console.print("[yellow]Falling back to basic speaker detection[/yellow]")
+            return self._basic_speaker_detection(segments)
+    
+    def _basic_speaker_detection(self, segments: List[TranscriptSegment]) -> List[TranscriptSegment]:
+        """Basic speaker detection based on silence gaps and text patterns."""
         enhanced_segments = []
         current_speaker = "Speaker_1"
         speaker_count = 1
@@ -250,9 +343,17 @@ class SpeechToText:
                 # Detect speaker change based on:
                 # 1. Long silence gap (>2 seconds)
                 # 2. Change in speaking style (questions vs statements)
+                # 3. Significant change in speaking tempo
+                prev_words = len(prev_segment.text.split())
+                curr_words = len(segment.text.split())
+                prev_wpm = prev_words / max((prev_segment.end - prev_segment.start) / 60, 0.01)
+                curr_wpm = curr_words / max((segment.end - segment.start) / 60, 0.01)
+                tempo_change = abs(curr_wpm - prev_wpm) / max(prev_wpm, 1)
+                
                 if (gap > 2.0 or 
                     (prev_segment.text.strip().endswith('?') and not segment.text.strip().endswith('?')) or
-                    (not prev_segment.text.strip().endswith('?') and segment.text.strip().endswith('?'))):
+                    (not prev_segment.text.strip().endswith('?') and segment.text.strip().endswith('?')) or
+                    tempo_change > 0.5):  # Significant tempo change
                     
                     speaker_count += 1
                     current_speaker = f"Speaker_{speaker_count}"
@@ -260,6 +361,7 @@ class SpeechToText:
             segment.speaker = current_speaker
             enhanced_segments.append(segment)
         
+        console.print(f"[green]Basic speaker detection completed: {speaker_count} speakers detected[/green]")
         return enhanced_segments
     
     def extract_key_phrases(self, segments: List[TranscriptSegment], min_word_count: int = 3) -> List[Dict[str, Any]]:

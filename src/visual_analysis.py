@@ -42,6 +42,14 @@ class ActionDetection:
     start_time: float
     end_time: float
 
+@dataclass
+class SceneClassification:
+    """Represents scene classification result."""
+    scene_type: str
+    confidence: float
+    timestamp: float
+    visual_features: Dict[str, float]
+
 class VisualAnalyzer:
     """Comprehensive visual analysis pipeline for video content."""
     
@@ -99,7 +107,8 @@ class VisualAnalyzer:
             'emotions': [],
             'actions': [],
             'scene_changes': [],
-            'highlights': []
+            'highlights': [],
+            'scenes': []
         }
         
         if not frame_paths:
@@ -128,6 +137,11 @@ class VisualAnalyzer:
                 # Emotion detection
                 emotions = self._detect_emotions(frame_rgb, timestamp)
                 results['emotions'].extend(emotions)
+                
+                # Scene classification
+                scene_info = self._classify_scene(frame_rgb, timestamp, objects)
+                if scene_info:
+                    results['scenes'].append(scene_info)
                 
                 # Scene change detection
                 current_features = self._extract_frame_features(frame_rgb)
@@ -158,7 +172,8 @@ class VisualAnalyzer:
         results['actions'] = self._detect_actions_from_objects(results['objects'], fps)
         
         console.print(f"[green]Visual analysis completed: {len(results['objects'])} objects, "
-                     f"{len(results['emotions'])} emotions, {len(results['actions'])} actions[/green]")
+                     f"{len(results['emotions'])} emotions, {len(results['actions'])} actions, "
+                     f"{len(results['scenes'])} scenes[/green]")
         
         return results
     
@@ -215,6 +230,116 @@ class VisualAnalyzer:
         except Exception as e:
             console.print(f"[yellow]Face detection error: {e}[/yellow]")
             return []
+    
+    def _classify_scene(self, frame: np.ndarray, timestamp: float, objects: List[DetectedObject]) -> Optional[SceneClassification]:
+        """Classify the scene type based on visual features and objects."""
+        try:
+            # Extract visual features for scene classification
+            features = self._extract_scene_features(frame, objects)
+            
+            # Rule-based scene classification
+            scene_type, confidence = self._determine_scene_type(features, objects)
+            
+            return SceneClassification(
+                scene_type=scene_type,
+                confidence=confidence,
+                timestamp=timestamp,
+                visual_features=features
+            )
+            
+        except Exception as e:
+            console.print(f"[yellow]Scene classification error: {e}[/yellow]")
+            return None
+    
+    def _extract_scene_features(self, frame: np.ndarray, objects: List[DetectedObject]) -> Dict[str, float]:
+        """Extract comprehensive features for scene classification."""
+        features = {}
+        
+        # Color analysis
+        hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+        mean_hue = np.mean(hsv[:, :, 0])
+        mean_sat = np.mean(hsv[:, :, 1])
+        mean_val = np.mean(hsv[:, :, 2])
+        
+        features['color_hue'] = mean_hue / 180.0  # Normalize to 0-1
+        features['color_saturation'] = mean_sat / 255.0
+        features['color_brightness'] = mean_val / 255.0
+        
+        # Texture analysis (edge density)
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        features['edge_density'] = np.sum(edges > 0) / edges.size
+        
+        # Lighting analysis
+        features['avg_brightness'] = np.mean(gray) / 255.0
+        features['brightness_std'] = np.std(gray) / 255.0
+        
+        # Object composition
+        features['object_count'] = len(objects)
+        features['person_count'] = sum(1 for obj in objects if obj.class_name == 'person')
+        features['vehicle_count'] = sum(1 for obj in objects if obj.class_name in ['car', 'truck', 'bus', 'bicycle', 'motorcycle'])
+        
+        # Spatial layout (detect horizontal/vertical dominance)
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        features['horizontal_edges'] = np.mean(np.abs(sobelx))
+        features['vertical_edges'] = np.mean(np.abs(sobely))
+        
+        return features
+    
+    def _determine_scene_type(self, features: Dict[str, float], objects: List[DetectedObject]) -> Tuple[str, float]:
+        """Determine scene type based on features and objects."""
+        scene_scores = {}
+        
+        # Indoor scenes
+        if features['avg_brightness'] < 0.4 and features['edge_density'] > 0.1:
+            scene_scores['indoor'] = 0.7
+        
+        # Outdoor scenes
+        if features['avg_brightness'] > 0.6 and features['color_brightness'] > 0.5:
+            scene_scores['outdoor'] = 0.8
+        
+        # Urban scenes
+        vehicle_objects = [obj for obj in objects if obj.class_name in ['car', 'truck', 'bus', 'traffic light']]
+        if len(vehicle_objects) > 2 or any(obj.class_name == 'traffic light' for obj in objects):
+            scene_scores['urban'] = 0.75
+        
+        # Nature scenes
+        nature_objects = [obj for obj in objects if obj.class_name in ['bird', 'horse', 'sheep', 'cow', 'elephant']]
+        if (features['color_saturation'] > 0.4 and features['color_hue'] > 0.2 and features['color_hue'] < 0.4 
+            and len(nature_objects) > 0):
+            scene_scores['nature'] = 0.8
+        
+        # Sports/Action scenes
+        sports_objects = [obj for obj in objects if obj.class_name in ['sports ball', 'baseball bat', 'tennis racket', 'skateboard', 'surfboard']]
+        if len(sports_objects) > 0 or features['person_count'] > 3:
+            scene_scores['sports'] = 0.7
+        
+        # Social/Group scenes
+        if features['person_count'] > 2:
+            scene_scores['social'] = 0.6 + min(features['person_count'] * 0.1, 0.3)
+        
+        # Presentation/Speaking scenes
+        if features['person_count'] == 1 and features['avg_brightness'] > 0.5:
+            scene_scores['presentation'] = 0.65
+        
+        # Kitchen/Cooking scenes
+        kitchen_objects = [obj for obj in objects if obj.class_name in ['bowl', 'cup', 'knife', 'spoon', 'bottle']]
+        if len(kitchen_objects) > 2:
+            scene_scores['cooking'] = 0.7
+        
+        # Technology/Gaming scenes
+        tech_objects = [obj for obj in objects if obj.class_name in ['laptop', 'mouse', 'keyboard', 'cell phone', 'tv']]
+        if len(tech_objects) > 1:
+            scene_scores['technology'] = 0.65
+        
+        # Default to generic if no specific scene detected
+        if not scene_scores:
+            scene_scores['generic'] = 0.5
+        
+        # Return scene with highest score
+        best_scene = max(scene_scores.items(), key=lambda x: x[1])
+        return best_scene[0], best_scene[1]
     
     def _extract_frame_features(self, frame: np.ndarray) -> np.ndarray:
         """Extract features from frame for scene change detection."""
