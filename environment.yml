@@ -46,6 +46,7 @@ dependencies:
       - open-clip-torch
       - controlnet-aux
       - face-recognition==1.3.0
+      - ffmpeg-python==0.2.0
       # - xformers  # Skip for now due to CUTLASS submodule issues
       - invisible-watermark
       # - clip-by-openai==1.1  # Requires torch<1.7.2
