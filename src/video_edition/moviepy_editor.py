@@ -67,6 +67,13 @@ try:
 except ImportError:
     VISUAL_ANALYSIS_AVAILABLE = False
 
+# Import simple caption system as fallback
+try:
+    from .simple_captions import SimpleCaptionGenerator, SimpleTranscriptSegment
+    SIMPLE_CAPTIONS_AVAILABLE = True
+except ImportError:
+    SIMPLE_CAPTIONS_AVAILABLE = False
+
 console = Console()
 
 @dataclass
@@ -103,11 +110,23 @@ class MoviePyShortsEditor:
             raise ImportError("MoviePy is required for video processing")
         
         # Initialize analysis tools if needed and available
-        if (config.add_captions or config.auto_highlight) and SPEECH_TO_TEXT_AVAILABLE:
-            try:
-                self.speech_to_text = SpeechToText()
-            except Exception as e:
-                console.print(f"[yellow]Could not initialize speech-to-text: {e}[/yellow]")
+        console.print(f"[cyan]Initializing with captions={config.add_captions}, speech_available={SPEECH_TO_TEXT_AVAILABLE}, simple_captions={SIMPLE_CAPTIONS_AVAILABLE}[/cyan]")
+        
+        if config.add_captions:
+            if SPEECH_TO_TEXT_AVAILABLE:
+                try:
+                    console.print("[blue]Initializing advanced speech-to-text...[/blue]")
+                    self.speech_to_text = SpeechToText()
+                    console.print("[green]Advanced speech-to-text initialized[/green]")
+                except Exception as e:
+                    console.print(f"[yellow]Advanced speech-to-text failed: {e}[/yellow]")
+                    self._init_simple_captions()
+            elif SIMPLE_CAPTIONS_AVAILABLE:
+                self._init_simple_captions()
+            else:
+                console.print("[yellow]No caption system available[/yellow]")
+        else:
+            console.print("[yellow]Captions disabled in config[/yellow]")
         
         if (config.auto_highlight or config.trending_effects) and VISUAL_ANALYSIS_AVAILABLE:
             try:
@@ -119,6 +138,15 @@ class MoviePyShortsEditor:
         """Cleanup temporary files."""
         if hasattr(self, 'temp_dir') and self.temp_dir.exists():
             shutil.rmtree(self.temp_dir, ignore_errors=True)
+    
+    def _init_simple_captions(self):
+        """Initialize simple caption system as fallback."""
+        try:
+            console.print("[blue]Initializing simple caption system...[/blue]")
+            self.simple_caption_generator = SimpleCaptionGenerator()
+            console.print("[green]Simple caption system initialized[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Simple caption system failed: {e}[/yellow]")
     
     def create_shorts_video(self, input_path: Path, output_path: Path, 
                            progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
@@ -139,8 +167,11 @@ class MoviePyShortsEditor:
             
             # Get transcript if available
             transcript_segments = []
-            if self.config.add_captions and self.speech_to_text:
-                transcript_segments = self._extract_transcript_moviepy(video)
+            if self.config.add_captions:
+                if self.speech_to_text:
+                    transcript_segments = self._extract_transcript_moviepy(video)
+                elif hasattr(self, 'simple_caption_generator'):
+                    transcript_segments = self._extract_simple_captions(video)
             
             # Analyze visual highlights if available
             visual_highlights = []
@@ -216,6 +247,31 @@ class MoviePyShortsEditor:
             
         except Exception as e:
             console.print(f"[yellow]Could not extract transcript: {e}[/yellow]")
+            return []
+    
+    def _extract_simple_captions(self, video: VideoFileClip) -> List:
+        """Extract captions using simple caption system."""
+        try:
+            segments = self.simple_caption_generator.extract_audio_and_transcribe(video)
+            
+            # Convert SimpleTranscriptSegment to regular transcript format
+            converted_segments = []
+            for seg in segments:
+                # Create a simple object that mimics TranscriptSegment
+                class SimpleSegment:
+                    def __init__(self, start, end, text):
+                        self.start = start
+                        self.end = end
+                        self.text = text
+                        self.confidence = 0.8
+                        self.speaker = None
+                
+                converted_segments.append(SimpleSegment(seg.start, seg.end, seg.text))
+            
+            return converted_segments
+            
+        except Exception as e:
+            console.print(f"[yellow]Simple caption extraction failed: {e}[/yellow]")
             return []
     
     def _analyze_visual_highlights_moviepy(self, video: VideoFileClip) -> List[Dict[str, Any]]:
@@ -426,43 +482,104 @@ class MoviePyShortsEditor:
     
     def _add_captions_moviepy(self, video: VideoFileClip, 
                             captions: List[CaptionSegment]) -> VideoFileClip:
-        """Add styled captions to video using MoviePy."""
+        """Add styled captions to video using PIL/Pillow."""
         
-        try:
-            text_clips = []
+        text_clips = []
+        
+        for caption in captions:
+            # Create text image using PIL
+            text_image = self._create_text_image_pil(
+                caption.text,
+                video.w,
+                video.h,
+                caption.style
+            )
             
-            for caption in captions:
-                # Calculate position
-                if caption.position == "bottom":
-                    pos = ('center', video.h - self.config.caption_margin)
-                elif caption.position == "top":
-                    pos = ('center', self.config.caption_margin)
-                else:  # center
-                    pos = ('center', 'center')
-                
-                # Create text clip
-                txt_clip = TextClip(
-                    caption.text,
-                    fontsize=caption.style["fontsize"],
-                    color=caption.style["color"],
-                    font=caption.style.get("font", "Arial-Bold"),
-                    stroke_color=caption.style.get("stroke_color", "black"),
-                    stroke_width=caption.style.get("stroke_width", 2)
-                ).set_position(pos).set_start(caption.start_time).set_end(caption.end_time)
-                
-                text_clips.append(txt_clip)
+            # Convert PIL image to MoviePy ImageClip
+            from moviepy.editor import ImageClip
+            txt_clip = ImageClip(text_image, transparent=True).set_start(
+                caption.start_time
+            ).set_duration(
+                caption.end_time - caption.start_time
+            ).set_position(('center', 'bottom'))
             
-            # Composite video with text
-            if text_clips:
-                final_video = CompositeVideoClip([video] + text_clips)
-                console.print(f"[green]Added {len(text_clips)} caption overlays[/green]")
-                return final_video
-            else:
-                return video
-                
-        except Exception as e:
-            console.print(f"[yellow]Could not add captions: {e}[/yellow]")
+            text_clips.append(txt_clip)
+        
+        if text_clips:
+            # Composite video with text overlays
+            final_video = CompositeVideoClip([video] + text_clips)
+            console.print(f"[green]Added {len(text_clips)} caption overlays[/green]")
+            return final_video
+        else:
             return video
+    
+    def _create_text_image_pil(self, text: str, video_width: int, video_height: int, 
+                              style: Dict[str, Any]) -> np.ndarray:
+        """Create text image using PIL/Pillow."""
+        from PIL import Image, ImageDraw, ImageFont
+        
+        # Get style parameters
+        font_size = style.get('fontsize', 50)
+        text_color = style.get('color', 'white')
+        stroke_color = style.get('stroke_color', 'black')
+        stroke_width = style.get('stroke_width', 2)
+        
+        # Create image with transparent background
+        img = Image.new('RGBA', (video_width, video_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        # Try to load font, fallback to default
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        except:
+            try:
+                font = ImageFont.truetype("arial.ttf", font_size)
+            except:
+                font = ImageFont.load_default()
+        
+        # Calculate text position (centered horizontally, bottom aligned)
+        lines = text.split('\n')
+        total_height = len(lines) * font_size
+        y_start = video_height - total_height - 100  # 100px from bottom
+        
+        for i, line in enumerate(lines):
+            # Get text bounding box
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+            
+            x = (video_width - text_width) // 2
+            y = y_start + (i * font_size)
+            
+            # Draw text with stroke
+            if stroke_width > 0:
+                # Draw stroke
+                for adj_x in range(-stroke_width, stroke_width + 1):
+                    for adj_y in range(-stroke_width, stroke_width + 1):
+                        draw.text((x + adj_x, y + adj_y), line, font=font, fill=stroke_color)
+            
+            # Draw main text
+            draw.text((x, y), line, font=font, fill=text_color)
+        
+        # Convert PIL image to numpy array
+        return np.array(img)
+    
+    def _save_srt_captions(self, captions: List[CaptionSegment], output_path: Path):
+        """Save captions as SRT subtitle file."""
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for i, caption in enumerate(captions, 1):
+                start_time = self._format_srt_time(caption.start_time)
+                end_time = self._format_srt_time(caption.end_time)
+                
+                f.write(f"{i}\n")
+                f.write(f"{start_time} --> {end_time}\n")
+                f.write(f"{caption.text}\n\n")
+    
+    def _format_srt_time(self, seconds: float) -> str:
+        """Format time for SRT subtitles."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:06.3f}".replace('.', ',')
     
     def _export_video_moviepy(self, video: VideoFileClip, output_path: Path) -> Dict[str, Any]:
         """Export the final video using MoviePy."""
